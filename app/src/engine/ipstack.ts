@@ -8,6 +8,8 @@ export interface L3If {
   mask?: number;
   mac: string;
   up: boolean;
+  /** Point-to-point (serial): no ARP, frames go straight to the other end. */
+  p2p?: boolean;
 }
 
 export interface StackHost {
@@ -315,6 +317,10 @@ export class IpStack {
     const l3 = this.ifByName(ifName);
     if (!l3 || !l3.up) return;
     if (l3.ip !== undefined && l3.mask !== undefined && nh === broadcastOf(l3.ip, l3.mask)) {
+      this.host.l2send(ifName, { src: l3.mac, dst: BCAST_MAC, type: 'ipv4', ip: pkt });
+      return;
+    }
+    if (l3.p2p) {
       this.host.l2send(ifName, { src: l3.mac, dst: BCAST_MAC, type: 'ipv4', ip: pkt });
       return;
     }

@@ -7,7 +7,7 @@ export const engine = new Engine();
 // expose for debugging in devtools
 (globalThis as Record<string, unknown>).netlab = engine;
 
-export type Tool = 'select' | 'delete' | 'note' | 'pdu' | 'cable';
+export type Tool = 'select' | 'inspect' | 'delete' | 'note' | 'pdu' | 'cable';
 export type Tab = 'physical' | 'config' | 'cli' | 'desktop' | 'services';
 
 export interface DeviceWin {
@@ -26,6 +26,8 @@ export interface Scenario {
   status: 'Ready' | 'In progress' | 'Successful' | 'Failed';
   fired: number;
 }
+
+export type InspectTable = 'arp' | 'mac' | 'route' | 'dhcp' | 'ports';
 
 export interface Anim {
   pdus: PduEvent[];
@@ -58,6 +60,9 @@ export interface UiState {
   menu: string | null;
   dialog: 'about' | 'shortcuts' | 'new' | null;
   placing: DeviceKind | null;
+  placingModel: string | null;
+  inspects: { id: number; devId: string; table: InspectTable; x: number; y: number }[];
+  inspectMenu: { devId: string; x: number; y: number } | null;
   ask: { text: string; ok: string; resolve: (v: boolean) => void } | null;
 }
 
@@ -86,6 +91,9 @@ let state: UiState = {
   menu: null,
   dialog: null,
   placing: null,
+  placingModel: null,
+  inspects: [],
+  inspectMenu: null,
   ask: null,
 };
 
@@ -125,7 +133,8 @@ export function openWindow(devId: string, tab?: Tab) {
     const existing = s.wins.find((w) => w.devId === devId);
     if (existing) return { topZ: z, wins: s.wins.map((w) => (w.devId === devId ? { ...w, z, tab: tab ?? w.tab } : w)) };
     const d = engine.devices.get(devId);
-    const defTab: Tab = tab ?? (d && (d.kind === 'router' || d.kind === 'switch') ? 'cli' : 'desktop');
+    const defTab: Tab =
+      tab ?? (!d ? 'physical' : d.kind === 'router' || d.kind === 'switch' || d.kind === 'l3switch' ? 'cli' : d.kind === 'pc' || d.kind === 'laptop' || d.kind === 'server' ? 'desktop' : d.kind === 'hub' ? 'physical' : 'config');
     const n = s.wins.length;
     return { topZ: z, wins: [...s.wins, { devId, tab: defTab, x: 120 + n * 28, y: 70 + n * 28, z }] };
   });

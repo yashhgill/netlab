@@ -8,6 +8,9 @@ import { parseRange } from './ifnames';
 import {
   runningConfig,
   showArp,
+  showCdpNeighbors,
+  showControllers,
+  showRunInterface,
   showDhcpBinding,
   showDhcpPool,
   showInterface,
@@ -31,6 +34,14 @@ type Await =
   | { kind: 'copy' };
 
 const HELP: Record<string, string> = {
+  cdp: 'CDP information',
+  neighbors: 'CDP neighbor entries',
+  controllers: 'Interface controller status',
+  clock: 'Configure serial interface clock',
+  rate: 'Configure serial interface clock speed',
+  ppp: 'Point-to-Point protocol',
+  hdlc: 'Serial HDLC synchronous',
+  bandwidth: 'Set bandwidth informational parameter',
   enable: 'Turn on privileged commands',
   disable: 'Turn off privileged commands',
   exit: 'Exit from the EXEC',
@@ -142,6 +153,8 @@ const PHELP: Record<string, string> = {
 
 const isR = (s: IosSession) => s.dev instanceof Router;
 const isSw = (s: IosSession) => s.dev instanceof Switch;
+const isML = (s: IosSession) => s.dev instanceof Switch && s.dev.multilayer;
+const routes = (s: IosSession) => isR(s) || isML(s);
 const priv = (s: IosSession) => s.mode === 'exec';
 
 function t(p: string) {
@@ -177,6 +190,17 @@ EXEC.add(t('show mac address-table'), (s) => s.write(showMacTable(s.dev as Switc
 EXEC.add(t('show mac-address-table'), (s) => s.write(showMacTable(s.dev as Switch)), isSw);
 EXEC.add(t('show ip dhcp binding'), (s) => s.write(showDhcpBinding(s.dev as Router)), isR);
 EXEC.add(t('show ip dhcp pool'), (s) => s.write(showDhcpPool(s.dev as Router)), isR);
+EXEC.add(t('show cdp neighbors'), (s) => s.write(showCdpNeighbors(s.dev)));
+EXEC.add(t('show controllers {iface:ifn}'), (s, a) => {
+  const i = s.dev.ifaces.get(a.ifn);
+  if (!i) return s.invalidAt(a.ifn);
+  s.write(showControllers(s.dev, i));
+}, isR);
+EXEC.add(t('show running-config interface {iface:ifn}'), (s, a) => {
+  const i = s.dev.ifaces.get(a.ifn);
+  if (!i) return s.invalidAt(a.ifn);
+  s.write(showRunInterface(s.dev, i));
+}, priv);
 EXEC.add(t('show history'), (s) => s.write(s.history.slice(-10).map((h) => '  ' + h).join('\n') + '\n'));
 EXEC.add(t('copy running-config startup-config'), (s) => s.askCopy(), priv);
 EXEC.add(t('write'), (s) => s.saveConfig(), priv);
@@ -212,29 +236,30 @@ CONF.add(t('no interface {iface:ifn}'), (s, a) => {
   else s.write('% Physical interfaces cannot be removed\n');
 });
 const addRoute = (s: IosSession, a: Args) => {
-  const r = s.dev as Router;
+  const r = s.dev;
   if (!isValidMask(a.mask)) return s.write('%Inconsistent address and mask\n');
   if (network(a.net, a.mask) !== a.net) return s.write('%Inconsistent address and mask\n');
   const nr = { net: a.net, mask: a.mask, nextHop: a.nh, ifName: a.ifn, ad: a.ad ?? 1 };
   r.stack.staticRoutes = r.stack.staticRoutes.filter((x) => !(x.net === nr.net && x.mask === nr.mask && x.nextHop === nr.nextHop && x.ifName === nr.ifName));
   r.stack.staticRoutes.push(nr);
 };
-CONF.add(t('ip route {ip:net} {ip:mask} {ip:nh}'), addRoute, isR);
-CONF.add(t('ip route {ip:net} {ip:mask} {ip:nh} {num:ad:1-255}'), addRoute, isR);
-CONF.add(t('ip route {ip:net} {ip:mask} {iface:ifn}'), (s, a) => (s.dev.ifaces.has(a.ifn) ? addRoute(s, a) : s.invalidAt(a.ifn)), isR);
-CONF.add(t('ip route {ip:net} {ip:mask} {iface:ifn} {num:ad:1-255}'), (s, a) => (s.dev.ifaces.has(a.ifn) ? addRoute(s, a) : s.invalidAt(a.ifn)), isR);
+CONF.add(t('ip route {ip:net} {ip:mask} {ip:nh}'), addRoute, routes);
+CONF.add(t('ip route {ip:net} {ip:mask} {ip:nh} {num:ad:1-255}'), addRoute, routes);
+CONF.add(t('ip route {ip:net} {ip:mask} {iface:ifn}'), (s, a) => (s.dev.ifaces.has(a.ifn) ? addRoute(s, a) : s.invalidAt(a.ifn)), routes);
+CONF.add(t('ip route {ip:net} {ip:mask} {iface:ifn} {num:ad:1-255}'), (s, a) => (s.dev.ifaces.has(a.ifn) ? addRoute(s, a) : s.invalidAt(a.ifn)), routes);
 const delRoute = (s: IosSession, a: Args) => {
-  const r = s.dev as Router;
+  const r = s.dev;
   const before = r.stack.staticRoutes.length;
   r.stack.staticRoutes = r.stack.staticRoutes.filter(
     (x) => !(x.net === a.net && x.mask === a.mask && (a.nh === undefined || x.nextHop === a.nh) && (a.ifn === undefined || x.ifName === a.ifn)),
   );
   if (r.stack.staticRoutes.length === before) s.write('%No matching route to delete\n');
 };
-CONF.add(t('no ip route {ip:net} {ip:mask}'), delRoute, isR);
-CONF.add(t('no ip route {ip:net} {ip:mask} {ip:nh}'), delRoute, isR);
-CONF.add(t('no ip route {ip:net} {ip:mask} {iface:ifn}'), delRoute, isR);
-CONF.add(t('ip routing'), () => {}, isR);
+CONF.add(t('no ip route {ip:net} {ip:mask}'), delRoute, routes);
+CONF.add(t('no ip route {ip:net} {ip:mask} {ip:nh}'), delRoute, routes);
+CONF.add(t('no ip route {ip:net} {ip:mask} {iface:ifn}'), delRoute, routes);
+CONF.add(t('ip routing'), (s) => (s.dev instanceof Switch ? s.dev.setRouting(true) : undefined), routes);
+CONF.add(t('no ip routing'), (s) => (s.dev instanceof Switch ? s.dev.setRouting(false) : undefined), isML);
 CONF.add(t('ip classless'), () => {}, isR);
 CONF.add(t('no ip domain-lookup'), () => {});
 CONF.add(t('ip domain-name {word:name}'), (s, a) => (s.dev.ios.domainName = a.name));
@@ -313,8 +338,10 @@ CONF.add(t('line vty {num:n:0-15} {num:m:0-15}'), (s) => {
 const IF = new CommandTree<IosSession>();
 addCommon(IF);
 IF.add(t('exit'), (s) => (s.mode = 'config'));
-const l3If = (s: IosSession) => s.curIfs().every((i) => (s.dev instanceof Router ? true : i.sviVlan !== undefined));
-const swPort = (s: IosSession) => isSw(s) && s.curIfs().every((i) => i.physical);
+const l3If = (s: IosSession) => s.curIfs().every((i) => (s.dev instanceof Router ? true : i.sviVlan !== undefined || !!i.routed));
+const swPort = (s: IosSession) => isSw(s) && s.curIfs().every((i) => i.physical && !i.routed);
+const serial = (s: IosSession) => s.curIfs().every((i) => i.media === 'serial');
+const mlPhys = (s: IosSession) => isML(s) && s.curIfs().every((i) => i.physical);
 const phys = (s: IosSession) => s.curIfs().every((i) => i.physical);
 const subif = (s: IosSession) => s.curIfs().every((i) => !!i.parent);
 IF.add(t('ip address {ip:addr} {ip:mask}'), (s, a) => s.setIp(a.addr, a.mask), l3If);
@@ -366,6 +393,20 @@ IF.add(t('switchport trunk allowed vlan remove {vlanlist:ids}'), (s, a) => s.eac
 }), swPort);
 IF.add(t('no switchport trunk allowed vlan'), (s) => s.eachIf((i) => (i.allowedVlans = null)), swPort);
 IF.add(t('switchport nonegotiate'), () => {}, swPort);
+IF.add(t('switchport trunk encapsulation dot1q'), () => {}, (s) => swPort(s) && isML(s));
+IF.add(t('no switchport'), (s) => s.eachIf((i) => (s.dev as Switch).setRouted(i.name, true)), mlPhys);
+IF.add(t('switchport'), (s) => s.eachIf((i) => (s.dev as Switch).setRouted(i.name, false)), mlPhys);
+IF.add(t('clock rate {num:rate:300-8000000}'), (s, a) => {
+  const ok = [1200, 2400, 4800, 9600, 19200, 38400, 56000, 64000, 72000, 125000, 128000, 148000, 250000, 500000, 800000, 1000000, 1300000, 2000000, 4000000, 8000000];
+  if (!ok.includes(a.rate)) return s.write(`Unknown clock rate\n`);
+  s.eachIf((i) => (i.clockRate = a.rate));
+  for (const i of s.curIfs()) if (s.dev.engine.isDce(s.dev.id, i.name) === false) s.write('This command applies only to DCE interfaces\n');
+}, serial);
+IF.add(t('no clock rate'), (s) => s.eachIf((i) => (i.clockRate = undefined)), serial);
+IF.add(t('encapsulation ppp'), (s) => s.eachIf((i) => (i.encap = 'ppp')), serial);
+IF.add(t('encapsulation hdlc'), (s) => s.eachIf((i) => (i.encap = 'hdlc')), serial);
+IF.add(t('bandwidth {num:kbps:1-10000000}'), (s, a) => s.eachIf((i) => (i.bandwidth = a.kbps)));
+IF.add(t('no bandwidth'), (s) => s.eachIf((i) => (i.bandwidth = undefined)));
 IF.add(t('spanning-tree portfast'), () => {}, swPort);
 
 // ------------------------------------------------------------------ LINE
@@ -719,6 +760,9 @@ export class IosSession extends ShellBase implements Shell {
     if (!isValidMask(mask)) return this.write('% Bad mask 0x' + (mask >>> 0).toString(16).toUpperCase() + ' for address ' + fmtIp(addr) + '\n');
     const net = network(addr, mask);
     if (addr === net || addr === (net | (~mask >>> 0)) >>> 0) return this.write('Bad mask /' + mask + ' for address ' + fmtIp(addr) + '\n');
+    if (this.dev instanceof Switch && this.curIfs().some((i) => i.physical && !i.routed)) {
+      return this.write('% IP addresses may not be configured on L2 links.\n');
+    }
     for (const i of this.curIfs()) {
       const clash = [...this.dev.ifaces.values()].find(
         (o) => o !== i && o.ip !== undefined && o.mask !== undefined && network(o.ip, o.mask) === net,
@@ -856,8 +900,8 @@ export function reloadDevice(dev: IosDevice) {
       ? Router.fromJSON({ ...snap, id: dev.id, x: dev.x, y: dev.y })
       : Switch.fromJSON({ ...snap, id: dev.id, x: dev.x, y: dev.y })
     : dev instanceof Router
-      ? new Router(dev.id, dev.hostname.startsWith('Router') ? dev.hostname : 'Router')
-      : new Switch(dev.id, dev.hostname.startsWith('Switch') ? dev.hostname : 'Switch');
+      ? new Router(dev.id, dev.hostname.startsWith('Router') ? dev.hostname : 'Router', dev.model)
+      : new Switch(dev.id, /^(ML)?Switch/.test(dev.hostname) ? dev.hostname : 'Switch', dev.model);
   const links = new Map([...dev.ifaces.values()].map((i) => [i.name, { linkId: i.linkId, mac: i.mac }]));
   const keepStartup = { startupSnapshot: dev.ios.startupSnapshot, startupConfig: dev.ios.startupConfig };
   dev.hostname = fresh.hostname;
@@ -882,5 +926,7 @@ export function reloadDevice(dev: IosDevice) {
   if (dev instanceof Switch && fresh instanceof Switch) {
     dev.vlans = fresh.vlans;
     dev.macTable.clear();
+    dev.stack.staticRoutes = fresh.stack.staticRoutes;
+    dev.setRouting(fresh.ipRouting);
   }
 }

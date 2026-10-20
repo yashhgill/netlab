@@ -17,7 +17,7 @@ export interface Example {
   build: (e: Engine) => Note[];
 }
 
-function link(e: Engine, a: { id: string }, ai: string, b: { id: string }, bi: string, cable: 'straight' | 'cross' = 'straight') {
+function link(e: Engine, a: { id: string }, ai: string, b: { id: string }, bi: string, cable: import('./engine/engine').CableType = 'straight') {
   e.connect({ dev: a.id, iface: ai }, { dev: b.id, iface: bi }, cable);
 }
 
@@ -138,6 +138,86 @@ export const EXAMPLES: Example[] = [
       return [
         { id: 'n1', x: 120, y: 60, text: 'PC0, PC1: VLAN 10 (STAFF)\nPC2, Laptop0: VLAN 20 (GUEST)\nEvery host gets its address from R1 by DHCP.' },
       ];
+    },
+  },
+  {
+    id: 'wan',
+    title: 'Serial WAN between two sites',
+    summary: 'Two NL-R1900 routers joined by a serial cable. HQ is the DCE and sets the clock rate. A console cable is ready on PC0.',
+    build(e) {
+      const hq = createDevice(e, 'router', 300, 160, 'NL-R1900') as Router;
+      const br = createDevice(e, 'router', 700, 160, 'NL-R1900') as Router;
+      const s1 = createDevice(e, 'switch', 300, 330) as Switch;
+      const p1 = createDevice(e, 'pc', 200, 480) as Host;
+      const p2 = createDevice(e, 'laptop', 380, 480) as Host;
+      const p3 = createDevice(e, 'pc', 700, 400) as Host;
+      link(e, hq, 'Serial0/0/0', br, 'Serial0/0/0', 'serial-dce');
+      link(e, hq, 'GigabitEthernet0/0', s1, 'GigabitEthernet0/1');
+      link(e, p1, 'FastEthernet0', s1, 'FastEthernet0/1');
+      link(e, p2, 'FastEthernet0', s1, 'FastEthernet0/2');
+      link(e, p3, 'FastEthernet0', br, 'GigabitEthernet0/0', 'cross');
+      link(e, p1, 'RS232', hq, 'Console', 'console');
+      applyConfig(hq, ['hostname HQ', 'interface g0/0', 'ip address 192.168.10.1 255.255.255.0', 'no shutdown', 'interface s0/0/0', 'ip address 10.0.0.1 255.255.255.252', 'clock rate 64000', 'no shutdown', 'exit', 'ip route 192.168.20.0 255.255.255.0 10.0.0.2']);
+      applyConfig(br, ['hostname Branch', 'interface g0/0', 'ip address 192.168.20.1 255.255.255.0', 'no shutdown', 'interface s0/0/0', 'ip address 10.0.0.2 255.255.255.252', 'no shutdown', 'exit', 'ip route 0.0.0.0 0.0.0.0 Serial0/0/0']);
+      p1.setStatic(ip('192.168.10.10'), m24, ip('192.168.10.1'));
+      p2.setStatic(ip('192.168.10.11'), m24, ip('192.168.10.1'));
+      p3.setStatic(ip('192.168.20.10'), m24, ip('192.168.20.1'));
+      return [{ id: 'n1', x: 430, y: 40, text: 'Try: on HQ, show controllers s0/0/0\nOn PC0, open Desktop > Terminal for HQ\'s console.' }];
+    },
+  },
+  {
+    id: 'multilayer',
+    title: 'Inter-VLAN routing on a multilayer switch',
+    summary: 'An NL-S3600 routes between VLAN 10 and VLAN 20 with SVIs, and reaches the internet edge router over a routed port.',
+    build(e) {
+      const edge = createDevice(e, 'router', 460, 100, 'NL-R4400') as Router;
+      const core = createDevice(e, 'l3switch', 460, 260) as Switch;
+      const a1 = createDevice(e, 'switch', 260, 400) as Switch;
+      const a2 = createDevice(e, 'switch', 660, 400) as Switch;
+      const hosts = [
+        createDevice(e, 'pc', 180, 540) as Host,
+        createDevice(e, 'laptop', 340, 540) as Host,
+        createDevice(e, 'pc', 580, 540) as Host,
+        createDevice(e, 'printer', 740, 540) as Host,
+      ];
+      link(e, edge, 'GigabitEthernet0/0/0', core, 'GigabitEthernet1/0/24');
+      link(e, core, 'GigabitEthernet1/0/1', a1, 'GigabitEthernet0/1', 'cross');
+      link(e, core, 'GigabitEthernet1/0/2', a2, 'GigabitEthernet0/1', 'cross');
+      link(e, hosts[0], 'FastEthernet0', a1, 'FastEthernet0/1');
+      link(e, hosts[1], 'FastEthernet0', a1, 'FastEthernet0/2');
+      link(e, hosts[2], 'FastEthernet0', a2, 'FastEthernet0/1');
+      link(e, hosts[3], 'FastEthernet0', a2, 'FastEthernet0/2');
+      applyConfig(a1, ['hostname Access1', 'vlan 10', 'name STAFF', 'exit', 'interface range fa0/1 - 2', 'switchport mode access', 'switchport access vlan 10', 'interface g0/1', 'switchport mode trunk', 'exit']);
+      applyConfig(a2, ['hostname Access2', 'vlan 20', 'name LAB', 'exit', 'interface range fa0/1 - 2', 'switchport mode access', 'switchport access vlan 20', 'interface g0/1', 'switchport mode trunk', 'exit']);
+      applyConfig(core, [
+        'hostname Core',
+        'ip routing',
+        'vlan 10',
+        'name STAFF',
+        'vlan 20',
+        'name LAB',
+        'exit',
+        'interface range g1/0/1 - 2',
+        'switchport trunk encapsulation dot1q',
+        'switchport mode trunk',
+        'interface vlan 10',
+        'ip address 10.10.0.1 255.255.255.0',
+        'no shutdown',
+        'interface vlan 20',
+        'ip address 10.20.0.1 255.255.255.0',
+        'no shutdown',
+        'interface g1/0/24',
+        'no switchport',
+        'ip address 172.16.0.2 255.255.255.252',
+        'exit',
+        'ip route 0.0.0.0 0.0.0.0 172.16.0.1',
+      ]);
+      applyConfig(edge, ['hostname Edge', 'interface g0/0/0', 'ip address 172.16.0.1 255.255.255.252', 'no shutdown', 'exit', 'ip route 10.0.0.0 255.0.0.0 172.16.0.2']);
+      hosts[0].setStatic(ip('10.10.0.10'), m24, ip('10.10.0.1'));
+      hosts[1].setStatic(ip('10.10.0.11'), m24, ip('10.10.0.1'));
+      hosts[2].setStatic(ip('10.20.0.10'), m24, ip('10.20.0.1'));
+      hosts[3].setStatic(ip('10.20.0.50'), m24, ip('10.20.0.1'));
+      return [{ id: 'n1', x: 100, y: 80, text: 'Core routes between VLANs.\nRun show ip route on Core, then ping 172.16.0.1 from PC0.' }];
     },
   },
 ];

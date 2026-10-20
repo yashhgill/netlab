@@ -1,10 +1,12 @@
 import { BCAST_MAC, newMac, network, parseIp } from '../addr';
 import { DhcpClient, DhcpServer, type DhcpPool } from '../dhcp';
 import { Device, type DeviceKind } from '../engine';
+import { modelSpec } from '../models';
 import { IpStack, type L3If } from '../ipstack';
 import type { Frame } from '../packets';
 
 export const HOST_IF = 'FastEthernet0';
+export type HostKind = 'pc' | 'laptop' | 'server' | 'printer' | 'phone';
 
 export class Host extends Device {
   kind: DeviceKind;
@@ -17,11 +19,13 @@ export class Host extends Device {
   dhcpStatus = '';
   terminal: string[] = [];
 
-  constructor(id: string, kind: 'pc' | 'laptop' | 'server', hostname: string) {
+  constructor(id: string, kind: HostKind, hostname: string, model?: string) {
     super(id, hostname);
     this.kind = kind;
-    this.model = kind === 'pc' ? 'NL-PC' : kind === 'laptop' ? 'NL-Laptop' : 'NL-Server';
-    this.ifaces.set(HOST_IF, { name: HOST_IF, mac: newMac(), adminUp: true, physical: true, speed: 100 });
+    const spec = modelSpec(model, kind);
+    this.model = spec.id;
+    this.ifaces.set(HOST_IF, { name: HOST_IF, mac: newMac(), adminUp: true, physical: true, speed: 100, media: 'copper' });
+    for (const m of spec.mgmt) this.mgmt.set(m.name, { name: m.name, mac: '000000000000', adminUp: true, physical: true, speed: m.speed, media: m.media });
     this.stack = new IpStack(
       {
         dev: this,
@@ -120,6 +124,12 @@ export class Host extends Device {
     this.stack.receiveFrame(ifName, frame);
   }
 
+  protected onPower(on: boolean) {
+    this.stack.arp.clear();
+    this.stack.pending = [];
+    if (!on) this.dhcpClient.cancel();
+  }
+
   protected onLineChange(ifName: string, up: boolean) {
     this.stack.flushIface(ifName);
     if (up && this.ipMode === 'dhcp' && (this.nic.ip === undefined || this.dhcpStatus.startsWith('DHCP failed'))) {
@@ -132,6 +142,8 @@ export class Host extends Device {
     const n = this.nic;
     return {
       type: this.kind,
+      model: this.model,
+      powered: this.powered,
       id: this.id,
       hostname: this.hostname,
       x: this.x,
@@ -147,7 +159,8 @@ export class Host extends Device {
   }
 
   static fromJSON(j: Record<string, any>): Host {
-    const h = new Host(j.id, j.type, j.hostname);
+    const h = new Host(j.id, j.type, j.hostname, j.model);
+    if (j.powered === false) h.powered = false;
     h.x = j.x;
     h.y = j.y;
     if (j.mac) h.nic.mac = j.mac;

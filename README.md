@@ -10,16 +10,21 @@ An open-source network simulator for the browser and the desktop. Build a topolo
 
 | Area | Supported |
 | --- | --- |
-| Devices | Router (NL-R3000, 3 × Gigabit), switch (NL-S2400, 24 × Fast + 2 × Gigabit), PC, laptop, server |
-| Cabling | Copper straight-through, cross-over and automatic; wrong cable types keep the link down |
+| Routers | NL-R1900 (2 × Gigabit, 2 × serial), NL-R3000 (3 × Gigabit), NL-R2900 (3 × Gigabit, 4 × serial), NL-R4400 (4 × Gigabit, 2 × fiber) |
+| Switches | NL-S2400 (24 × Fast, 2 × Gigabit), NL-S2448 (48 × Fast), NL-S2960F (24 × Gigabit, 2 × fiber), NL-S3600 multilayer (24 × Gigabit, 4 × fiber), hub |
+| End devices | PC, laptop, server, printer, IP phone |
+| Cabling | Automatic, console, copper straight-through and cross-over, fiber, serial DCE and DTE; wrong cable types keep the link down |
+| WAN | Serial links that need `clock rate` on the DCE end, HDLC or PPP encapsulation |
+| Multilayer | `ip routing`, SVIs, routed ports with `no switchport` |
 | Switching | MAC learning, flooding, filtering, VLANs, 802.1Q trunks, native and allowed VLANs, SVIs |
 | Routing | Connected and static routes, default routes, router-on-a-stick sub-interfaces, TTL, ICMP unreachable and time exceeded |
 | Services | DHCP pools on routers, DHCP server device, `ip helper-address` relay, APIPA fallback on clients |
-| IOS CLI | Modes and prompts, abbreviations, `?` help, Tab completion, history, `do`, `interface range`, `show` commands, passwords, banners, `copy run start`, `reload` |
+| Tools | Inspect ARP, MAC and routing tables; power each device on and off; power cycle all; fast forward time; front-panel view with port LEDs; console Terminal on PCs |
+| IOS CLI | Modes and prompts, abbreviations, `?` help, Tab completion, history, `do`, `interface range`, `show` commands (including `show cdp neighbors`, `show controllers`, `show run interface`), passwords, banners, `copy run start`, `reload` |
 | PC CLI | `ipconfig` (`/all`, `/release`, `/renew`), `ping` (`-n`, `-t`), `tracert`, `arp -a` |
 | Simulation | Pause time, step or play, protocol filters, event list, PDU inspector, Simple PDUs |
 
-Not yet: dynamic routing protocols (RIP, OSPF), STP, ACLs, NAT, wireless, serial links. Contributions are welcome.
+Not yet: dynamic routing protocols (RIP, OSPF), STP, ACLs, NAT and wireless. Contributions are welcome.
 
 ## Project layout
 

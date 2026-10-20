@@ -1,6 +1,9 @@
+const SLOT = /^\d+(\/\d+){1,2}(\.\d+)?$/;
 const TYPES = [
-  { full: 'FastEthernet', short: 'Fa', trunk: 'Fa', numRe: /^\d+\/\d+(\.\d+)?$/ },
-  { full: 'GigabitEthernet', short: 'Gi', trunk: 'Gig', numRe: /^\d+\/\d+(\.\d+)?$/ },
+  { full: 'FastEthernet', short: 'Fa', trunk: 'Fa', numRe: SLOT },
+  { full: 'GigabitEthernet', short: 'Gi', trunk: 'Gig', numRe: SLOT },
+  { full: 'Serial', short: 'Se', trunk: 'Se', numRe: SLOT },
+  { full: 'Ethernet', short: 'Eth', trunk: 'Eth', numRe: /^\d+$/ },
   { full: 'Vlan', short: 'Vlan', trunk: 'Vlan', numRe: /^\d+$/ },
 ];
 
@@ -39,14 +42,14 @@ export function parseRange(text: string): string[] | null {
   const parts = text.replace(/\s*-\s*/g, '-').split(',').map((s) => s.trim()).filter(Boolean);
   const out: string[] = [];
   for (const part of parts) {
-    const m = part.match(/^([a-zA-Z]+)\s*(\d+)\/(\d+)(?:-(\d+))?$/);
+    const m = part.match(/^([a-zA-Z]+)\s*((?:\d+\/){1,2})(\d+)(?:-(\d+))?$/);
     if (!m) return null;
     const type = typeFor(m[1]);
     if (!type || type.full === 'Vlan') return null;
     const lo = +m[3];
     const hi = m[4] ? +m[4] : lo;
     if (hi < lo) return null;
-    for (let n = lo; n <= hi; n++) out.push(`${type.full}${m[2]}/${n}`);
+    for (let n = lo; n <= hi; n++) out.push(`${type.full}${m[2]}${n}`);
   }
   return out.length ? out : null;
 }

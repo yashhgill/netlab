@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState, type PointerEvent as RPE } from 'react';
 import { fmtIp, maskToPrefix } from '../engine/addr';
-import type { Device, DeviceKind, Link } from '../engine/engine';
+import { mediaOf, type Device, type DeviceKind, type Link } from '../engine/engine';
 import { PDU_COLORS } from '../engine/packets';
 import { shortIf } from '../cli/ifnames';
 import {
   addNote,
-  autoPort,
+  autoPair,
+  mediaForCable,
   connectPorts,
   createScenario,
   deleteDevice,
@@ -15,12 +16,12 @@ import {
   placeDevice,
   updateNote,
 } from './actions';
-import { DeviceArt } from './icons';
+import { CABLE_STYLE, DeviceArt } from './icons';
 import { EXAMPLES } from '../examples';
 import { loadExample } from './TopBar';
 import { engine, getState, markDirty, openWindow, setState, toast, useUi } from './store';
 
-const ICON = 56;
+const ICON = 66;
 
 interface View {
   x: number;
@@ -133,6 +134,11 @@ export function Canvas() {
       handleCableClick(d, e.clientX, e.clientY);
       return;
     }
+    if (s.tool === 'inspect') {
+      const r = svgRef.current!.getBoundingClientRect();
+      setState({ inspectMenu: { devId: d.id, x: Math.min(e.clientX - r.left + 10, r.width - 220), y: Math.min(e.clientY - r.top + 10, r.height - 200) } });
+      return;
+    }
     if (s.tool === 'pdu') {
       if (!s.pduSrc) {
         setState({ pduSrc: d.id });
@@ -156,8 +162,9 @@ export function Canvas() {
       setState({ cableFrom: null });
       return;
     }
-    if (!freePorts(d).length) {
-      toast(`${d.hostname} has no free ports.`, 'error');
+    const media = mediaForCable(s.cable);
+    if (!freePorts(d, media).length) {
+      toast(`${d.hostname} has no free ${s.cable === 'console' ? 'console or RS-232' : s.cable === 'fiber' ? 'fiber' : s.cable.startsWith('serial') ? 'serial' : ''} ports.`.replace('  ', ' '), 'error');
       return;
     }
     if (s.cable === 'auto') {
@@ -166,10 +173,9 @@ export function Canvas() {
         return;
       }
       const a = engine.devices.get(from.dev)!;
-      const pa = from.iface ? a.ifaces.get(from.iface)! : autoPort(a, d);
-      const pb = autoPort(d, a);
-      if (!pa || !pb) return toast('No free port available.', 'error');
-      connectPorts({ dev: a.id, iface: pa.name }, { dev: d.id, iface: pb.name }, 'auto');
+      const pair = autoPair(a, d, from.iface || undefined);
+      if (!pair) return toast(`${a.hostname} and ${d.hostname} have no free ports that one cable can join.`, 'error');
+      connectPorts({ dev: a.id, iface: pair[0].name }, { dev: d.id, iface: pair[1].name }, 'auto');
       setState({ cableFrom: null });
       return;
     }
@@ -185,14 +191,7 @@ export function Canvas() {
       setState({ cableFrom: { dev: p.dev, iface } });
       return;
     }
-    const from = s.cableFrom;
-    if (!from.iface) {
-      const a = engine.devices.get(from.dev)!;
-      const pa = autoPort(a, engine.devices.get(p.dev)!);
-      if (!pa) return;
-      from.iface = pa.name;
-    }
-    connectPorts(from, { dev: p.dev, iface }, s.cable);
+    connectPorts(s.cableFrom, { dev: p.dev, iface }, s.cable);
     setState({ cableFrom: null });
   };
 
@@ -201,9 +200,10 @@ export function Canvas() {
     const s = getState();
     setState({ portPicker: null, menu: null });
     const w = toWorld(e.clientX, e.clientY);
+    setState({ inspectMenu: null });
     if (s.placing) {
-      placeDevice(s.placing, w.x, w.y);
-      if (!e.shiftKey) setState({ placing: null });
+      placeDevice(s.placing, w.x, w.y, s.placingModel ?? undefined);
+      if (!e.shiftKey) setState({ placing: null, placingModel: null });
       return;
     }
     if (s.tool === 'note') {
@@ -251,11 +251,12 @@ export function Canvas() {
   };
 
   const onDrop = (e: React.DragEvent) => {
-    const kind = e.dataTransfer.getData('application/x-netlab-device') as DeviceKind;
-    if (!kind) return;
+    const data = e.dataTransfer.getData('application/x-netlab-device');
+    if (!data) return;
+    const [kind, model] = data.split('|') as [DeviceKind, string];
     e.preventDefault();
     const w = toWorld(e.clientX, e.clientY);
-    placeDevice(kind, w.x, w.y);
+    placeDevice(kind, w.x, w.y, model);
   };
 
   const onLinkDown = (e: RPE, l: Link) => {
@@ -320,17 +321,34 @@ export function Canvas() {
             const py = ux * 11;
             return (
               <g key={l.id} className="link" onPointerDown={(e) => onLinkDown(e, l)}>
-                <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} className="link-hit" />
-                <line
-                  x1={a.x}
-                  y1={a.y}
-                  x2={b.x}
-                  y2={b.y}
+                <path d={cablePath(a, b, l.cable)} className="link-hit" fill="none" />
+                <path
+                  d={cablePath(a, b, l.cable)}
+                  fill="none"
                   className={`link-line${sel ? ' selected' : ''}`}
-                  strokeDasharray={l.cable === 'cross' ? '7 5' : undefined}
+                  style={sel ? undefined : { stroke: CABLE_STYLE[l.cable].stroke, strokeWidth: CABLE_STYLE[l.cable].width }}
+                  strokeDasharray={CABLE_STYLE[l.cable].dash}
+                  strokeLinejoin="round"
                 />
-                <circle cx={a.x + ux * lightA} cy={a.y + uy * lightA} r={5} className={`light ${sa}`} />
-                <circle cx={b.x - ux * lightB} cy={b.y - uy * lightB} r={5} className={`light ${sb}`} />
+                {l.cable !== 'console' && (
+                  <>
+                    <circle cx={a.x + ux * lightA} cy={a.y + uy * lightA} r={5} className={`light ${sa}`} />
+                    <circle cx={b.x - ux * lightB} cy={b.y - uy * lightB} r={5} className={`light ${sb}`} />
+                  </>
+                )}
+                {l.dce && (() => {
+                  const fromA = l.dce === 'a';
+                  const base = fromA ? a : b;
+                  const sgn = fromA ? 1 : -1;
+                  const dist = (fromA ? lightA : lightB) + 16;
+                  return (
+                    <g transform={`translate(${base.x + sgn * ux * dist - px * 0.9} ${base.y + sgn * uy * dist - py * 0.9})`} pointerEvents="none">
+                      <title>DCE end</title>
+                      <circle r="6" fill="#fff" stroke="#d9434e" strokeWidth="1.4" />
+                      <path d="M0 -3.4 V0 L2.4 1.4" stroke="#d9434e" strokeWidth="1.4" fill="none" strokeLinecap="round" />
+                    </g>
+                  );
+                })()}
                 {showLabels && (
                   <>
                     <text x={a.x + ux * labA + px} y={a.y + uy * labA + py + 3.5} className="port-label">
@@ -346,7 +364,7 @@ export function Canvas() {
           })}
 
           {cableFrom && mouse && (
-            <line x1={pos(cableFrom.dev).x} y1={pos(cableFrom.dev).y} x2={mouse.x} y2={mouse.y} className="rubber" strokeDasharray={cable === 'cross' ? '7 5' : undefined} />
+            <path d={cablePath(pos(cableFrom.dev), mouse, cable)} fill="none" className="rubber" style={cable === 'auto' ? undefined : { stroke: CABLE_STYLE[cable].stroke }} strokeDasharray={CABLE_STYLE[cable].dash} />
           )}
 
           {notes.map((n) => (
@@ -407,14 +425,14 @@ export function Canvas() {
                   setHover(null);
                 }}
               >
-                <rect x={-ICON / 2 - 8} y={-ICON / 2 - 6} width={ICON + 16} height={ICON + 30} rx={10} className="device-halo" />
+                <rect x={-ICON / 2 - 4} y={-ICON / 2 + 6} width={ICON + 8} height={ICON + 12} rx={10} className="device-halo" />
                 <g transform={`translate(${-ICON / 2} ${-ICON / 2}) scale(${ICON / 64})`}>
-                  <DeviceArt kind={d.kind} />
+                  <DeviceArt kind={d.kind} model={d.model} />
                 </g>
-                <text y={ICON / 2 + 12} className="device-name">
+                <text y={ICON / 2 + 4} className="device-name">
                   {d.hostname}
                 </text>
-                <text y={ICON / 2 + 23} className="device-model">
+                <text y={ICON / 2 + 15} className="device-model">
                   {d.model}
                 </text>
               </g>
@@ -455,7 +473,7 @@ export function Canvas() {
 
           {placing && mouse && (
             <g transform={`translate(${mouse.x - ICON / 2} ${mouse.y - ICON / 2}) scale(${ICON / 64})`} opacity={0.5} pointerEvents="none">
-              <DeviceArt kind={placing} />
+              <DeviceArt kind={placing} model={getState().placingModel ?? undefined} />
             </g>
           )}
         </g>
@@ -503,11 +521,36 @@ export function Canvas() {
   );
 }
 
+/** Cable geometry: serial gets a lightning kink, console a gentle curve, the rest are straight. */
+function cablePath(a: { x: number; y: number }, b: { x: number; y: number }, cable: Link['cable']) {
+  if (cable === 'serial-dce' || cable === 'serial-dte') {
+    const mx = (a.x + b.x) / 2;
+    const my = (a.y + b.y) / 2;
+    const len = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+    const ux = (b.x - a.x) / len;
+    const uy = (b.y - a.y) / len;
+    const k = Math.min(12, len / 8);
+    const p1 = { x: mx - ux * k + -uy * k, y: my - uy * k + ux * k };
+    const p2 = { x: mx + ux * k + uy * k, y: my + uy * k - ux * k };
+    return `M${a.x} ${a.y} L${p1.x} ${p1.y} L${p2.x} ${p2.y} L${b.x} ${b.y}`;
+  }
+  if (cable === 'console') {
+    const mx = (a.x + b.x) / 2;
+    const my = (a.y + b.y) / 2;
+    const len = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+    const nx = -(b.y - a.y) / len;
+    const ny = (b.x - a.x) / len;
+    const bend = Math.min(40, len / 5);
+    return `M${a.x} ${a.y} Q${mx + nx * bend} ${my + ny * bend} ${b.x} ${b.y}`;
+  }
+  return `M${a.x} ${a.y} L${b.x} ${b.y}`;
+}
+
 /** Distance from a device's centre to the edge of its icon-plus-label box along a direction. */
 function exitDist(ux: number, uy: number) {
   const halfW = 34;
-  const top = 32;
-  const bottom = 54;
+  const top = 22;
+  const bottom = 50;
   const tx = Math.abs(ux) > 1e-6 ? halfW / Math.abs(ux) : Infinity;
   const ty = Math.abs(uy) > 1e-6 ? (uy > 0 ? bottom : top) / Math.abs(uy) : Infinity;
   return Math.min(tx, ty);
@@ -523,7 +566,9 @@ function PortPicker({ dev, x, y, onPick, onClose }: { dev: Device; x: number; y:
     window.addEventListener('keydown', k);
     return () => window.removeEventListener('keydown', k);
   }, [onClose]);
-  const ports = dev.physicalIfaces();
+  const cable = getState().cable;
+  const media = mediaForCable(cable);
+  const ports = dev.allPorts().filter((p) => media.includes(mediaOf(p)));
   return (
     <div className="port-picker" style={{ left: x + 8, top: y + 8 }} onPointerDown={(e) => e.stopPropagation()} role="menu">
       <div className="port-picker-title">Choose a port on {dev.hostname}</div>
@@ -534,7 +579,7 @@ function PortPicker({ dev, x, y, onPick, onClose }: { dev: Device; x: number; y:
           return (
             <button key={p.name} role="menuitem" disabled={!!p.linkId} onClick={() => onPick(p.name)}>
               <span>{p.name}</span>
-              <span className="port-peer">{peerName ? `→ ${peerName}` : ''}</span>
+              <span className="port-peer">{peerName ? `to ${peerName}` : mediaOf(p) === 'copper' ? '' : mediaOf(p) === 'rs232' ? 'RS-232' : mediaOf(p)}</span>
             </button>
           );
         })}

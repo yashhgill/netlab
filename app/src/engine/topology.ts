@@ -1,5 +1,6 @@
 import { Engine, uid, type CableType, type Device, type DeviceKind } from './engine';
-import { Host } from './devices/host';
+import { Host, type HostKind } from './devices/host';
+import { Hub } from './devices/hub';
 import { Router } from './devices/router';
 import { Switch } from './devices/switch';
 
@@ -12,6 +13,10 @@ const baseNames: Record<DeviceKind, string> = {
   server: 'Server',
   switch: 'Switch',
   router: 'Router',
+  l3switch: 'MLSwitch',
+  hub: 'Hub',
+  printer: 'Printer',
+  phone: 'IPPhone',
 };
 
 export function nextName(engine: Engine, kind: DeviceKind): string {
@@ -20,13 +25,14 @@ export function nextName(engine: Engine, kind: DeviceKind): string {
   for (let n = 0; ; n++) if (!used.has(`${base}${n}`)) return `${base}${n}`;
 }
 
-export function createDevice(engine: Engine, kind: DeviceKind, x: number, y: number): Device {
+export function createDevice(engine: Engine, kind: DeviceKind, x: number, y: number, model?: string): Device {
   const id = uid('d');
   const name = nextName(engine, kind);
   let d: Device;
-  if (kind === 'switch') d = new Switch(id, name);
-  else if (kind === 'router') d = new Router(id, name);
-  else d = new Host(id, kind, name);
+  if (kind === 'switch' || kind === 'l3switch') d = new Switch(id, name, model ?? (kind === 'l3switch' ? 'NL-S3600' : undefined));
+  else if (kind === 'router') d = new Router(id, name, model);
+  else if (kind === 'hub') d = new Hub(id, name, model);
+  else d = new Host(id, kind as HostKind, name, model);
   d.x = x;
   d.y = y;
   engine.addDevice(d);
@@ -44,7 +50,7 @@ export interface SavedFile {
   format: string;
   version: number;
   devices: Record<string, unknown>[];
-  links: { id: string; a: { dev: string; iface: string }; b: { dev: string; iface: string }; cable: CableType }[];
+  links: { id: string; a: { dev: string; iface: string }; b: { dev: string; iface: string }; cable: CableType; dce?: 'a' | 'b' }[];
   notes?: Note[];
 }
 
@@ -53,13 +59,14 @@ export function serialize(engine: Engine, notes: Note[] = []): SavedFile {
     format: FILE_FORMAT,
     version: FILE_VERSION,
     devices: [...engine.devices.values()].map((d) => d.toJSON()),
-    links: [...engine.links.values()].map((l) => ({ id: l.id, a: l.a, b: l.b, cable: l.cable })),
+    links: [...engine.links.values()].map((l) => ({ id: l.id, a: l.a, b: l.b, cable: l.cable, dce: l.dce })),
     notes,
   };
 }
 
 export function deviceFromJSON(j: Record<string, any>): Device {
-  if (j.type === 'switch') return Switch.fromJSON(j);
+  if (j.type === 'switch' || j.type === 'l3switch') return Switch.fromJSON(j);
+  if (j.type === 'hub') return Hub.fromJSON(j);
   if (j.type === 'router') return Router.fromJSON(j);
   return Host.fromJSON(j);
 }
@@ -70,7 +77,11 @@ export function load(engine: Engine, file: SavedFile): Note[] {
   engine.devices.clear();
   engine.links.clear();
   for (const j of file.devices) engine.addDevice(deviceFromJSON(j as Record<string, any>));
-  for (const l of file.links) engine.connect(l.a, l.b, l.cable, l.id);
+  for (const l of file.links) {
+    // keep which end is DCE: connect with the cable that puts DCE on end a
+    if (l.dce === 'b') engine.connect(l.b, l.a, 'serial-dce', l.id);
+    else engine.connect(l.a, l.b, l.cable, l.id);
+  }
   engine.refreshAll();
   engine.bump();
   return file.notes ?? [];

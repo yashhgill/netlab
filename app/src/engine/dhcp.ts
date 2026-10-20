@@ -25,6 +25,8 @@ export class DhcpServer {
   pools: DhcpPool[] = [];
   excluded: { lo: number; hi: number }[] = [];
   bindings = new Map<string, DhcpBinding>();
+  /** Addresses offered but not yet acknowledged, so two clients never get the same offer. */
+  private offered = new Map<string, number>();
   enabled = true;
   stack: IpStack;
   /** helper-address lookup for relaying: iface name -> server IP */
@@ -46,7 +48,10 @@ export class DhcpServer {
   private allocate(pool: DhcpPool, mac: string): number | undefined {
     const existing = this.bindings.get(mac);
     if (existing && existing.pool === pool.name) return existing.ip;
+    const prior = this.offered.get(mac);
+    if (prior !== undefined && network(prior, pool.mask!) === pool.net) return prior;
     const used = new Set([...this.bindings.values()].map((b) => b.ip));
+    for (const [m, ip] of this.offered) if (m !== mac) used.add(ip);
     const ownIps = new Set(this.stack.ifs().map((i) => i.ip).filter((x): x is number => x !== undefined));
     let lo = network(pool.net!, pool.mask!) + 1;
     let hi = broadcastOf(pool.net!, pool.mask!) - 1;
@@ -113,6 +118,8 @@ export class DhcpServer {
       giaddr: msg.giaddr,
     };
     if (msg.op === 'discover' && ip === undefined) return; // pool exhausted, stay silent
+    if (msg.op === 'discover' && ip !== undefined) this.offered.set(msg.chaddr, ip);
+    if (msg.op === 'request') this.offered.delete(msg.chaddr);
     if (reply.op === 'ack') this.bindings.set(msg.chaddr, { ip: ip!, mac: msg.chaddr, pool: pool.name, t: this.stack.host.dev.engine.now });
     if (msg.giaddr !== undefined) {
       this.stack.sendIp({ src: serverIp, dst: msg.giaddr, ttl: 255, proto: 'udp', udp: { srcPort: 67, dstPort: 67, dhcp: reply } });
@@ -129,6 +136,7 @@ export class DhcpServer {
     if (network(ip, pool.mask!) !== pool.net) return undefined;
     const owner = [...this.bindings.values()].find((b) => b.ip === ip);
     if (owner && owner.mac !== msg.chaddr) return undefined;
+    for (const [m, o] of this.offered) if (o === ip && m !== msg.chaddr) return undefined;
     if (this.isExcluded(ip)) return undefined;
     return ip;
   }
@@ -210,9 +218,10 @@ export class DhcpClient {
       if (this.timer) this.eng.cancel(this.timer as never);
       this.onBound(m);
     } else if (m.op === 'nak') {
-      this.state = 'failed';
+      // start over with a fresh DISCOVER
       if (this.timer) this.eng.cancel(this.timer as never);
-      this.onFail();
+      this.state = 'selecting';
+      this.attempt(2);
     }
   }
 }

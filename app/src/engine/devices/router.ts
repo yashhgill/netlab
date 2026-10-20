@@ -1,23 +1,28 @@
 import { BCAST_MAC, newMac } from '../addr';
 import { DhcpServer } from '../dhcp';
-import { Device, type DeviceKind, type Iface } from '../engine';
+import { Device, mediaOf, type DeviceKind, type Iface } from '../engine';
+import { modelSpec } from '../models';
 import { IpStack, type L3If } from '../ipstack';
 import type { Frame } from '../packets';
 import { IosState } from './ios-state';
 
 export class Router extends Device {
   kind: DeviceKind = 'router';
-  model = 'NL-R3000';
+  model: string;
   stack: IpStack;
   dhcp: DhcpServer;
   ios = new IosState();
 
-  constructor(id: string, hostname = 'Router') {
+  constructor(id: string, hostname = 'Router', model?: string) {
     super(id, hostname);
-    for (let p = 0; p <= 2; p++) {
-      const name = `GigabitEthernet0/${p}`;
-      this.ifaces.set(name, { name, mac: newMac(), adminUp: false, physical: true, speed: 1000 });
+    const spec = modelSpec(model, 'router');
+    this.model = spec.id;
+    for (const p of spec.ports) {
+      const i: Iface = { name: p.name, mac: newMac(), adminUp: false, physical: true, speed: p.speed, media: p.media };
+      if (p.media === 'serial') i.encap = 'hdlc';
+      this.ifaces.set(p.name, i);
     }
+    for (const m of spec.mgmt) this.mgmt.set(m.name, { name: m.name, mac: '000000000000', adminUp: true, physical: true, speed: m.speed, media: m.media });
     this.stack = new IpStack(
       { dev: this, l3ifs: () => this.l3ifs(), l2send: (n, f) => this.l2send(n, f) },
       { forwarding: true, ttl: 255 },
@@ -51,7 +56,14 @@ export class Router extends Device {
   }
 
   l3ifs(): L3If[] {
-    return [...this.ifaces.values()].map((i) => ({ name: i.name, ip: i.ip, mask: i.mask, mac: i.mac, up: this.lineUp(i.name) }));
+    return [...this.ifaces.values()].map((i) => ({
+      name: i.name,
+      ip: i.ip,
+      mask: i.mask,
+      mac: i.mac,
+      up: this.lineUp(i.name),
+      p2p: mediaOf(i) === 'serial',
+    }));
   }
 
   receive(ifName: string, frame: Frame) {
@@ -89,6 +101,12 @@ export class Router extends Device {
     } else this.sendFrame(l3name, frame);
   }
 
+  protected onPower(_on: boolean) {
+    this.stack.arp.clear();
+    this.stack.pending = [];
+    this.dhcp.bindings.clear();
+  }
+
   protected onLineChange(ifName: string, up: boolean) {
     const i = this.ifaces.get(ifName)!;
     this.stack.flushIface(ifName);
@@ -103,6 +121,8 @@ export class Router extends Device {
   toJSON() {
     return {
       type: 'router',
+      model: this.model,
+      powered: this.powered,
       id: this.id,
       hostname: this.hostname,
       x: this.x,
@@ -115,7 +135,8 @@ export class Router extends Device {
   }
 
   static fromJSON(j: Record<string, any>): Router {
-    const r = new Router(j.id, j.hostname);
+    const r = new Router(j.id, j.hostname, j.model);
+    if (j.powered === false) r.powered = false;
     r.x = j.x;
     r.y = j.y;
     r.ifaces.clear();

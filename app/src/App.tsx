@@ -4,7 +4,8 @@ import { Canvas, canvasApi } from './ui/Canvas';
 import { DeviceWindows } from './ui/DeviceWindow';
 import { Dock } from './ui/Dock';
 import { PduDetail, SimPanel } from './ui/SimPanel';
-import { loadExample, TopBar } from './ui/TopBar';
+import { loadExample, ToolPalette, TopBar } from './ui/TopBar';
+import { InspectMenu, InspectWindows } from './ui/Inspect';
 import { UiIcon } from './ui/icons';
 import { engine, getState, setState, useUi } from './ui/store';
 import { isDesktop } from './platform';
@@ -81,6 +82,9 @@ export default function App() {
       <main className="main">
         <div className="stage">
           <Canvas />
+          <ToolPalette />
+          <InspectMenu />
+          <InspectWindows />
           <DeviceWindows />
         </div>
         {sim && <SimPanel />}
@@ -113,7 +117,7 @@ function Dialog({ kind }: { kind: 'about' | 'shortcuts' | 'new' }) {
           <div className="about">
             <p>An open-source network simulator for learning switching, routing and the IOS-style command line. Build a topology, configure it, and watch every frame move in simulation mode.</p>
             <p className="muted small">Version 1.0. Made by HarNova Technology. NetLab is an independent project and is not affiliated with or endorsed by any network equipment vendor.</p>
-            <p className="muted small">Supported today: Ethernet switching, VLANs and 802.1Q trunks, router-on-a-stick, static routing, ARP, ICMP ping and traceroute, DHCP server and relay, IOS passwords, banners and startup-config.</p>
+            <p className="muted small">Supported today: 4 router models with Gigabit, serial and fiber ports; 4 switch models including a multilayer switch; hubs; PCs, laptops, servers, printers and IP phones; straight-through, cross-over, fiber, serial DCE/DTE and console cables. Ethernet switching, VLANs and 802.1Q trunks, router-on-a-stick, inter-VLAN routing on SVIs and routed ports, serial links with clock rate and HDLC/PPP, static routing, ARP, ICMP ping and traceroute, DHCP server and relay, CDP neighbors, IOS passwords, banners and startup-config.</p>
           </div>
         ) : (
           <table className="grid-table compact shortcuts">
@@ -123,6 +127,7 @@ function Dialog({ kind }: { kind: 'about' | 'shortcuts' | 'new' }) {
                 ['N', 'Place a note'],
                 ['D', 'Delete tool'],
                 ['P', 'Add a simple PDU'],
+                ['I', 'Inspect ARP, MAC and routing tables'],
                 ['Esc', 'Back to select'],
                 ['Delete', 'Delete the selected item'],
                 ['Ctrl/⌘ + S', 'Save'],

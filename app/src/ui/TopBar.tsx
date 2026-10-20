@@ -3,7 +3,7 @@ import { EXAMPLES } from '../examples';
 import { Engine } from '../engine/engine';
 import { serialize } from '../engine/topology';
 import { isDesktop, openText, saveText } from '../platform';
-import { currentFile, deleteSelected, newTopology, openTopology, setMode } from './actions';
+import { currentFile, deleteSelected, newTopology, openTopology } from './actions';
 import { canvasApi } from './Canvas';
 import { UiIcon } from './icons';
 import { askConfirm, engine, getState, setState, toast, useUi, type Tool } from './store';
@@ -46,23 +46,37 @@ export async function loadExample(id: string) {
   setTimeout(() => canvasApi.fit(), 50);
 }
 
-const TOOLS: { id: Tool; label: string; key: string; icon: () => React.ReactElement }[] = [
+export const TOOLS: { id: Tool; label: string; key: string; icon: () => React.ReactElement }[] = [
   { id: 'select', label: 'Select and move', key: 'V', icon: UiIcon.select },
-  { id: 'note', label: 'Place note', key: 'N', icon: UiIcon.note },
+  { id: 'inspect', label: 'Inspect tables', key: 'I', icon: UiIcon.inspect },
   { id: 'delete', label: 'Delete', key: 'D', icon: UiIcon.trash },
+  { id: 'note', label: 'Place note', key: 'N', icon: UiIcon.note },
   { id: 'pdu', label: 'Add simple PDU (ping)', key: 'P', icon: UiIcon.pdu },
 ];
 
-export function TopBar() {
+export const setTool = (t: Tool) => setState({ tool: t, cableFrom: null, pduSrc: null, placing: null, placingModel: null, portPicker: null, inspectMenu: null });
+
+/** Vertical tool palette on the right edge of the workspace. */
+export function ToolPalette() {
   const tool = useUi((s) => s.tool);
+  return (
+    <div className="palette" role="toolbar" aria-label="Tools" aria-orientation="vertical">
+      {TOOLS.map((t) => (
+        <button key={t.id} className={`tool${tool === t.id ? ' on' : ''}`} onClick={() => setTool(t.id)} title={`${t.label} (${t.key})`} aria-pressed={tool === t.id}>
+          <t.icon />
+        </button>
+      ))}
+    </div>
+  );
+}
+
+export function TopBar() {
   const menu = useUi((s) => s.menu);
   const fileName = useUi((s) => s.fileName);
   const dirty = useUi((s) => s.dirty);
   const showLabels = useUi((s) => s.showLabels);
   useUi((s) => s.engineVersion);
-  const mode = engine.mode;
 
-  const setTool = (t: Tool) => setState({ tool: t, cableFrom: null, pduSrc: null, placing: null, portPicker: null });
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -166,12 +180,16 @@ export function TopBar() {
         ))}
       </nav>
 
-      <div className="toolbar" role="toolbar" aria-label="Tools">
-        {TOOLS.map((t) => (
-          <button key={t.id} className={`tool${tool === t.id ? ' on' : ''}`} onClick={() => setTool(t.id)} title={`${t.label} (${t.key})`} aria-pressed={tool === t.id}>
-            <t.icon />
-          </button>
-        ))}
+      <div className="toolbar" role="toolbar" aria-label="File and view">
+        <button className="tool" onClick={doNew} title="New topology">
+          <UiIcon.newFile />
+        </button>
+        <button className="tool" onClick={doOpen} title="Open (Ctrl+O)">
+          <UiIcon.folder />
+        </button>
+        <button className="tool" onClick={doSave} title="Save (Ctrl+S)">
+          <UiIcon.save />
+        </button>
         <span className="toolbar-sep" />
         <button className="tool" onClick={() => canvasApi.zoom(1.2)} title="Zoom in">
           <UiIcon.zoomIn />
@@ -189,23 +207,7 @@ export function TopBar() {
         {dirty && <span className="dirty" aria-label="Unsaved changes" />}
       </div>
 
-      <div className="mode-switch" role="radiogroup" aria-label="Mode">
-        <span className="clock">{formatClock(engine.now)}</span>
-        <button role="radio" aria-checked={mode === 'realtime'} className={mode === 'realtime' ? 'on' : ''} onClick={() => setMode('realtime')}>
-          Realtime
-        </button>
-        <button role="radio" aria-checked={mode === 'simulation'} className={mode === 'simulation' ? 'on sim' : ''} onClick={() => setMode('simulation')}>
-          Simulation
-        </button>
-      </div>
     </header>
   );
 }
 
-function formatClock(ms: number) {
-  const s = Math.floor(ms / 1000);
-  const h = Math.floor(s / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  const sec = s % 60;
-  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
-}

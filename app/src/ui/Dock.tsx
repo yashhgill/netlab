@@ -1,94 +1,117 @@
 import { useState } from 'react';
-import type { CableType, DeviceKind } from '../engine/engine';
-import { describeScenario, fireScenario, removeScenario } from './actions';
-import { CableSwatch, DeviceGlyph } from './icons';
-import { setState, useUi } from './store';
+import { CABLE_LABEL, type CableType } from '../engine/engine';
+import { MODELS, type Category, type ModelSpec } from '../engine/models';
+import { describeScenario, fastForward, fireScenario, powerCycleAll, removeScenario, setMode } from './actions';
+import { CableSwatch, DeviceGlyph, UiIcon } from './icons';
+import { askConfirm, engine, setState, useUi } from './store';
 
-type Cat = 'routers' | 'switches' | 'end' | 'connections';
+type Top = 'network' | 'end' | 'connections';
 
-const CATS: { id: Cat; label: string; icon: DeviceKind | 'cable' }[] = [
-  { id: 'routers', label: 'Routers', icon: 'router' },
-  { id: 'switches', label: 'Switches', icon: 'switch' },
-  { id: 'end', label: 'End devices', icon: 'pc' },
-  { id: 'connections', label: 'Connections', icon: 'cable' },
-];
-
-const ITEMS: Record<Exclude<Cat, 'connections'>, { kind: DeviceKind; label: string; detail: string }[]> = {
-  routers: [{ kind: 'router', label: 'NL-R3000', detail: '3 × Gigabit' }],
-  switches: [{ kind: 'switch', label: 'NL-S2400', detail: '24 × Fast, 2 × Gigabit' }],
-  end: [
-    { kind: 'pc', label: 'PC', detail: 'Desktop' },
-    { kind: 'laptop', label: 'Laptop', detail: 'Portable' },
-    { kind: 'server', label: 'Server', detail: 'DHCP service' },
+const SUBS: Record<Top, { id: Category; label: string; kind: ModelSpec['kind']; model: string }[]> = {
+  network: [
+    { id: 'routers', label: 'Routers', kind: 'router', model: 'NL-R1900' },
+    { id: 'switches', label: 'Switches', kind: 'switch', model: 'NL-S2400' },
+    { id: 'hubs', label: 'Hubs', kind: 'hub', model: 'NL-H800' },
   ],
+  end: [{ id: 'end', label: 'End devices', kind: 'pc', model: 'NL-PC' }],
+  connections: [],
 };
 
-const CABLES: { type: CableType; label: string; detail: string }[] = [
-  { type: 'auto', label: 'Automatic', detail: 'Picks the cable and free ports' },
-  { type: 'straight', label: 'Copper straight-through', detail: 'PC or router to switch' },
-  { type: 'cross', label: 'Copper cross-over', detail: 'Like to like: switch–switch, PC–PC, router–PC' },
+const CABLES: { type: CableType; detail: string }[] = [
+  { type: 'auto', detail: 'Picks free ports and the right cable for you' },
+  { type: 'console', detail: 'PC RS-232 to a router or switch Console port' },
+  { type: 'straight', detail: 'PC, router or server to a switch or hub' },
+  { type: 'cross', detail: 'Like to like: switch to switch, PC to PC, router to router or PC' },
+  { type: 'fiber', detail: 'Between fiber (SFP) ports' },
+  { type: 'serial-dce', detail: 'Router serial ports; the first end you click is the DCE' },
+  { type: 'serial-dte', detail: 'Router serial ports; the first end you click is the DTE' },
 ];
 
 export function Dock() {
-  const [cat, setCat] = useState<Cat>('end');
+  const [top, setTop] = useState<Top>('network');
+  const [sub, setSub] = useState<Category>('routers');
+  const [hover, setHover] = useState<string>('');
   const placing = useUi((s) => s.placing);
+  const placingModel = useUi((s) => s.placingModel);
   const tool = useUi((s) => s.tool);
   const cable = useUi((s) => s.cable);
   const scenarios = useUi((s) => s.scenarios);
+  useUi((s) => s.engineVersion);
+
+  const chooseTop = (t: Top) => {
+    setTop(t);
+    if (SUBS[t][0]) setSub(SUBS[t][0].id);
+  };
+  const models = MODELS.filter((m) => m.category === sub);
+  const caption = hover || (top === 'connections' ? (tool === 'cable' ? CABLE_LABEL[cable] : 'Choose a cable') : placingModel ?? 'Drag a device onto the workspace');
 
   return (
     <footer className="dock">
-      <div className="dock-cats" role="tablist" aria-label="Device categories">
-        {CATS.map((c) => (
-          <button key={c.id} role="tab" aria-selected={cat === c.id} className={`dock-cat${cat === c.id ? ' on' : ''}`} onClick={() => setCat(c.id)} title={c.label}>
-            {c.icon === 'cable' ? (
-              <svg width="30" height="30" viewBox="0 0 32 32" aria-hidden="true">
-                <path d="M6 26 C 10 10, 22 22, 26 6" stroke="#2F5BEA" strokeWidth="2.6" fill="none" strokeLinecap="round" />
-                <circle cx="6" cy="26" r="3" fill="#22A55B" />
-                <circle cx="26" cy="6" r="3" fill="#22A55B" />
-              </svg>
-            ) : (
-              <DeviceGlyph kind={c.icon} size={32} />
-            )}
-            <span>{c.label}</span>
-          </button>
-        ))}
-      </div>
-
-      <div className="dock-items">
-        {cat === 'connections'
-          ? CABLES.map((c) => (
-              <button
-                key={c.type}
-                className={`dock-item cable${tool === 'cable' && cable === c.type ? ' on' : ''}`}
-                onClick={() => setState({ tool: 'cable', cable: c.type, cableFrom: null, placing: null })}
-                title={c.detail}
-              >
-                <span className="cable-swatch">
-                  <CableSwatch type={c.type} />
-                </span>
-                <span className="dock-item-label">{c.label}</span>
-                <span className="dock-item-detail">{c.detail}</span>
-              </button>
-            ))
-          : ITEMS[cat].map((it) => (
-              <button
-                key={it.kind}
-                className={`dock-item${placing === it.kind ? ' on' : ''}`}
-                draggable
-                onDragStart={(e) => {
-                  e.dataTransfer.setData('application/x-netlab-device', it.kind);
-                  e.dataTransfer.effectAllowed = 'copy';
-                }}
-                onClick={() => setState({ placing: placing === it.kind ? null : it.kind, tool: 'select', cableFrom: null })}
-                title="Drag onto the workspace, or click then click the workspace. Hold Shift to place several."
-              >
-                <DeviceGlyph kind={it.kind} size={44} />
-                <span className="dock-item-label">{it.label}</span>
-                <span className="dock-item-detail">{it.detail}</span>
+      <div className="dock-picker">
+        <div className="dock-tops" role="tablist" aria-label="Device types">
+          {(
+            [
+              ['network', 'Network devices', <DeviceGlyph key="n" kind="router" model="NL-R3000" size={34} />],
+              ['end', 'End devices', <DeviceGlyph key="e" kind="pc" size={34} />],
+              ['connections', 'Connections', <CableSwatch key="c" type="auto" big />],
+            ] as [Top, string, React.ReactNode][]
+          ).map(([id, label, icon]) => (
+            <button key={id} role="tab" aria-selected={top === id} className={`dock-top${top === id ? ' on' : ''}`} onClick={() => chooseTop(id)} title={label}>
+              {icon}
+              <span>{label}</span>
+            </button>
+          ))}
+        </div>
+        {SUBS[top].length > 1 && (
+          <div className="dock-subs" role="tablist" aria-label="Device families">
+            {SUBS[top].map((s) => (
+              <button key={s.id} role="tab" aria-selected={sub === s.id} className={`dock-sub${sub === s.id ? ' on' : ''}`} onClick={() => setSub(s.id)}>
+                <DeviceGlyph kind={s.kind} model={s.model} size={24} />
+                {s.label}
               </button>
             ))}
-        {tool === 'cable' && <p className="dock-hint">Click the first device, then the second. {cable === 'auto' ? 'Free ports are chosen for you.' : 'Pick a port on each.'}</p>}
+          </div>
+        )}
+      </div>
+
+      <div className="dock-strip-wrap">
+        <div className="dock-strip" onMouseLeave={() => setHover('')}>
+          {top === 'connections'
+            ? CABLES.map((c) => (
+                <button
+                  key={c.type}
+                  className={`dock-item cable${tool === 'cable' && cable === c.type ? ' on' : ''}`}
+                  onClick={() => setState({ tool: 'cable', cable: c.type, cableFrom: null, placing: null, portPicker: null })}
+                  onMouseEnter={() => setHover(`${CABLE_LABEL[c.type]}: ${c.detail}`)}
+                  aria-label={CABLE_LABEL[c.type]}
+                >
+                  <span className="cable-swatch">
+                    <CableSwatch type={c.type} big />
+                  </span>
+                  <span className="dock-item-label">{CABLE_LABEL[c.type]}</span>
+                </button>
+              ))
+            : models.map((m) => (
+                <button
+                  key={m.id}
+                  className={`dock-item${placing && placingModel === m.id ? ' on' : ''}`}
+                  draggable
+                  onDragStart={(e) => {
+                    e.dataTransfer.setData('application/x-netlab-device', `${m.kind}|${m.id}`);
+                    e.dataTransfer.effectAllowed = 'copy';
+                  }}
+                  onClick={() =>
+                    setState(placing && placingModel === m.id ? { placing: null, placingModel: null } : { placing: m.kind, placingModel: m.id, tool: 'select', cableFrom: null })
+                  }
+                  onMouseEnter={() => setHover(`${m.label}: ${m.detail}`)}
+                  aria-label={`${m.label}, ${m.detail}`}
+                >
+                  <DeviceGlyph kind={m.kind} model={m.id} size={50} />
+                  <span className="dock-item-label">{m.label}</span>
+                </button>
+              ))}
+        </div>
+        <div className="dock-caption">{caption}</div>
       </div>
 
       <div className="scenarios">
@@ -122,7 +145,7 @@ export function Dock() {
                       <button className="link-btn" onClick={() => fireScenario(sc.id)}>
                         Fire
                       </button>
-                      <button className="link-btn danger" onClick={() => removeScenario(sc.id)} aria-label="Remove PDU">
+                      <button className="link-btn danger" onClick={() => removeScenario(sc.id)}>
                         Remove
                       </button>
                     </td>
@@ -135,6 +158,55 @@ export function Dock() {
           <p className="muted small">Choose Add, click a source device, then a destination to send one ping.</p>
         )}
       </div>
+
+      <ModeBox />
     </footer>
   );
+}
+
+function ModeBox() {
+  useUi((s) => s.engineVersion);
+  const sim = engine.mode === 'simulation';
+  return (
+    <div className="modebox">
+      <div className="modebox-time">
+        <span className="muted small">Time</span>
+        <span className="clock">{formatClock(engine.now)}</span>
+      </div>
+      <div className="modebox-actions">
+        <button
+          className="btn small"
+          onClick={async () => {
+            if (await askConfirm('Restart every device? Routers and switches lose any configuration that was not saved with copy running-config startup-config.', 'Restart devices')) powerCycleAll();
+          }}
+          title="Turn every device off and on"
+        >
+          <UiIcon.power />
+          Power cycle
+        </button>
+        <button className="btn small" onClick={() => fastForward()} disabled={sim} title="Skip ahead 30 seconds">
+          <UiIcon.fastForward />
+          Fast forward
+        </button>
+      </div>
+      <div className="modebox-tabs" role="radiogroup" aria-label="Mode">
+        <button role="radio" aria-checked={!sim} className={!sim ? 'on' : ''} onClick={() => setMode('realtime')}>
+          <UiIcon.clock />
+          Realtime
+        </button>
+        <button role="radio" aria-checked={sim} className={sim ? 'on sim' : ''} onClick={() => setMode('simulation')}>
+          <UiIcon.stopwatch />
+          Simulation
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function formatClock(ms: number) {
+  const s = Math.floor(ms / 1000);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
 }

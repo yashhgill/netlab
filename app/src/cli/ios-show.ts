@@ -12,7 +12,7 @@ export function statusOf(d: IosDevice, i: Iface): { status: string; proto: strin
   const up = d.lineUp(i.name);
   if (i.physical || i.parent) {
     const phys = i.parent ? d.ifaces.get(i.parent)! : i;
-    const physUp = phys.adminUp && d.engine.physUp(d, phys);
+    const physUp = phys.adminUp && d.engine.physLinkUp(d, phys);
     if (i.parent && !phys.adminUp) return { status: 'administratively down', proto: 'down' };
     return { status: physUp ? 'up' : 'down', proto: up ? 'up' : 'down' };
   }
@@ -44,7 +44,7 @@ export function showIpRoute(d: IosDevice): string {
     '       i - IS-IS, L1 - IS-IS level-1, L2 - IS-IS level-2, ia - IS-IS inter area\n' +
     '       * - candidate default, U - per-user static route, o - ODR\n' +
     '       P - periodic downloaded static route\n\n';
-  if (d instanceof Switch) {
+  if (d instanceof Switch && !d.ipRouting) {
     return d.stack.defaultGateway !== undefined ? `Default gateway is ${fmtIp(d.stack.defaultGateway)}\n\nHost               Gateway           Last Use    Total Uses  Interface\nICMP redirect cache is empty\n` : 'Default gateway is not set\n\nHost               Gateway           Last Use    Total Uses  Interface\nICMP redirect cache is empty\n';
   }
   const table = d.stack.routingTable();
@@ -183,6 +183,66 @@ export function showVersion(d: IosDevice): string {
   );
 }
 
+/** The lines of one interface block in the running-config. */
+export function ifaceConfig(d: IosDevice, i: Iface): string[] {
+  const L = [`interface ${i.name}`];
+  if (i.description) L.push(` description ${i.description}`);
+  if (d instanceof Switch && i.physical && !i.routed) {
+    if (i.swMode === 'trunk') {
+      if (d.multilayer) L.push(' switchport trunk encapsulation dot1q');
+      if ((i.nativeVlan ?? 1) !== 1) L.push(` switchport trunk native vlan ${i.nativeVlan}`);
+      if (i.allowedVlans) L.push(` switchport trunk allowed vlan ${vlanRanges(i.allowedVlans)}`);
+      L.push(' switchport mode trunk');
+    } else {
+      if ((i.accessVlan ?? 1) !== 1) L.push(` switchport access vlan ${i.accessVlan}`);
+      if (i.swModeSet) L.push(' switchport mode access');
+    }
+  } else {
+    if (i.routed) L.push(' no switchport');
+    if (i.dot1q !== undefined) L.push(` encapsulation dot1Q ${i.dot1q}${i.dot1qNative ? ' native' : ''}`);
+    if (i.media === 'serial' && i.encap === 'ppp') L.push(' encapsulation ppp');
+    if (i.bandwidth) L.push(` bandwidth ${i.bandwidth}`);
+    if (i.ip !== undefined) L.push(` ip address ${fmtIp(i.ip)} ${fmtIp(i.mask!)}`);
+    else if (!i.parent) L.push(' no ip address');
+    if (i.helper !== undefined) L.push(` ip helper-address ${fmtIp(i.helper)}`);
+    if (i.media === 'serial' && i.clockRate) L.push(` clock rate ${i.clockRate}`);
+    if (d instanceof Router && i.physical && i.media !== 'serial') L.push(' duplex auto', ' speed auto');
+  }
+  if (!i.adminUp) L.push(' shutdown');
+  return L;
+}
+
+export function showRunInterface(d: IosDevice, i: Iface): string {
+  const body = ifaceConfig(d, i).join('\n') + '\nend\n';
+  return `Building configuration...\n\nCurrent configuration : ${body.length} bytes\n!\n${body}`;
+}
+
+export function showControllers(d: IosDevice, i: Iface): string {
+  if (i.media !== 'serial') return `${i.name}: controller information is available for serial interfaces only\n`;
+  const dce = d.engine.isDce(d.id, i.name);
+  let out = `Interface ${i.name}\nHardware is PowerQUICC MPC860\n`;
+  if (dce === null) out += 'No serial cable attached\n';
+  else if (dce) out += i.clockRate ? `DCE V.35, clock rate ${i.clockRate}\n` : 'DCE V.35, no clock\n';
+  else out += 'DTE V.35 TX and RX clocks detected.\n';
+  return out;
+}
+
+export function showCdpNeighbors(d: IosDevice): string {
+  let out =
+    'Capability Codes: R - Router, T - Trans Bridge, B - Source Route Bridge\n' +
+    '                  S - Switch, H - Host, I - IGMP, r - Repeater, P - Phone\n' +
+    'Device ID    Local Intrfce   Holdtme    Capability   Platform    Port ID\n';
+  for (const i of d.physicalIfaces()) {
+    if (!d.lineUp(i.name)) continue;
+    const peer = d.engine.peer(d.id, i.name);
+    const pd = peer && d.engine.devices.get(peer.dev);
+    if (!pd || !['router', 'switch', 'l3switch', 'phone'].includes(pd.kind) || !pd.powered) continue;
+    const cap = pd.kind === 'router' ? 'R' : pd.kind === 'l3switch' ? 'R S' : pd.kind === 'phone' ? 'H P' : 'S';
+    out += `${pd.hostname.slice(0, 12).padEnd(13)}${shortIf(i.name, true).padEnd(16)}${'164'.padEnd(11)}${cap.padEnd(13)}${pd.model.slice(0, 11).padEnd(12)}${shortIf(peer!.iface, true)}\n`;
+  }
+  return out;
+}
+
 // ---------------- running-config ----------------
 export function runningConfig(d: IosDevice): string {
   const st = d.ios;
@@ -207,29 +267,11 @@ export function runningConfig(d: IosDevice): string {
   if (st.domainName) L.push(`ip domain-name ${st.domainName}`, '!');
   if (d instanceof Switch) L.push('spanning-tree mode pvst', 'spanning-tree extend system-id', '!');
   for (const i of d.ifaces.values()) {
-    L.push(`interface ${i.name}`);
-    if (i.description) L.push(` description ${i.description}`);
-    if (d instanceof Switch && i.physical) {
-      if (i.swMode === 'trunk') {
-        if ((i.nativeVlan ?? 1) !== 1) L.push(` switchport trunk native vlan ${i.nativeVlan}`);
-        if (i.allowedVlans) L.push(` switchport trunk allowed vlan ${vlanRanges(i.allowedVlans)}`);
-        L.push(' switchport mode trunk');
-      } else {
-        if ((i.accessVlan ?? 1) !== 1) L.push(` switchport access vlan ${i.accessVlan}`);
-        if (i.swModeSet) L.push(' switchport mode access');
-      }
-    } else {
-      if (i.dot1q !== undefined) L.push(` encapsulation dot1Q ${i.dot1q}${i.dot1qNative ? ' native' : ''}`);
-      if (i.ip !== undefined) L.push(` ip address ${fmtIp(i.ip)} ${fmtIp(i.mask!)}`);
-      else if (!i.parent) L.push(' no ip address');
-      if (i.helper !== undefined) L.push(` ip helper-address ${fmtIp(i.helper)}`);
-      if (d instanceof Router && i.physical) L.push(' duplex auto', ' speed auto');
-    }
-    if (!i.adminUp) L.push(' shutdown');
-    L.push('!');
+    L.push(...ifaceConfig(d, i), '!');
   }
   if (d instanceof Switch && d.stack.defaultGateway !== undefined) L.push(`ip default-gateway ${fmtIp(d.stack.defaultGateway)}`, '!');
-  if (d instanceof Router) {
+  if (d instanceof Switch && d.ipRouting) L.push('ip routing', '!');
+  if (d instanceof Router || (d instanceof Switch && d.ipRouting)) {
     L.push('ip classless');
     for (const r of d.stack.staticRoutes) {
       L.push(`ip route ${fmtIp(r.net)} ${fmtIp(r.mask)} ${r.ifName ?? fmtIp(r.nextHop!)}${r.ad !== 1 ? ' ' + r.ad : ''}`);

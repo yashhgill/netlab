@@ -8,6 +8,8 @@ import { applyConfig } from '../cli/ios';
 import { statusOf } from '../cli/ios-show';
 import { shellFor } from '../cli/sessions';
 import { DeviceGlyph, UiIcon } from './icons';
+import { DevicePanel } from './deviceArt';
+import { togglePower } from './actions';
 import { Terminal } from './Terminal';
 import { closeWindow, engine, markDirty, setState, useUi, type DeviceWin, type Tab } from './store';
 
@@ -31,7 +33,7 @@ function tabsFor(d: Device): { id: Tab; label: string }[] {
   ];
   if (d instanceof Router || d instanceof Switch) t.push({ id: 'cli', label: 'CLI' });
   if (d.kind === 'server') t.push({ id: 'services', label: 'Services' });
-  if (d instanceof Host) t.push({ id: 'desktop', label: 'Desktop' });
+  if (d instanceof Host && (d.kind === 'pc' || d.kind === 'laptop' || d.kind === 'server')) t.push({ id: 'desktop', label: 'Desktop' });
   return t;
 }
 
@@ -68,7 +70,7 @@ function DeviceWindow({ win, dev }: { win: DeviceWin; dev: Device }) {
       aria-label={`${dev.hostname} settings`}
     >
       <div className="devwin-title" onPointerDown={onTitleDown} onPointerMove={onTitleMove} onPointerUp={() => (drag.current = null)}>
-        <DeviceGlyph kind={dev.kind} size={22} />
+        <DeviceGlyph kind={dev.kind} model={dev.model} size={22} />
         <span className="devwin-name">{dev.hostname}</span>
         <span className="devwin-model">{dev.model}</span>
         <button className="icon-btn" onClick={() => closeWindow(dev.id)} aria-label="Close window">
@@ -84,7 +86,7 @@ function DeviceWindow({ win, dev }: { win: DeviceWin; dev: Device }) {
       </div>
       <div className="devwin-body">
         {tab === 'physical' && <PhysicalTab dev={dev} />}
-        {tab === 'config' && (dev instanceof Host ? <HostConfigTab dev={dev} /> : <IosConfigTab dev={dev as Router | Switch} />)}
+        {tab === 'config' && (dev instanceof Host ? <HostConfigTab dev={dev} /> : dev instanceof Router || dev instanceof Switch ? <IosConfigTab dev={dev} /> : <NameOnlyConfig dev={dev} />)}
         {tab === 'cli' && <Terminal shell={shellFor(dev)} />}
         {tab === 'desktop' && dev instanceof Host && <DesktopTab dev={dev} />}
         {tab === 'services' && dev instanceof Host && <ServicesTab dev={dev} />}
@@ -95,37 +97,46 @@ function DeviceWindow({ win, dev }: { win: DeviceWin; dev: Device }) {
 
 // ---------------------------------------------------------------- Physical
 function PhysicalTab({ dev }: { dev: Device }) {
+  useUi((s) => s.engineVersion);
   return (
     <div className="physical">
-      <div className="physical-art">
-        <DeviceGlyph kind={dev.kind} size={120} />
-        <div>
-          <div className="physical-name">{dev.model}</div>
-          <div className="muted">{dev.physicalIfaces().length} ports</div>
-        </div>
+      <div className="physical-panel">
+        <DevicePanel dev={dev} onPower={() => togglePower(dev)} />
       </div>
+      <p className="muted small">
+        Click the power button to turn {dev.hostname} {dev.powered ? 'off' : 'on'}.
+        {(dev instanceof Router || dev instanceof Switch) && ' Turning a router or switch on loads its startup-config, so save first with copy running-config startup-config.'}
+      </p>
       <table className="grid-table">
         <thead>
           <tr>
             <th>Port</th>
+            <th>Type</th>
             <th>Link</th>
             <th>Connected to</th>
-            <th>MAC address</th>
           </tr>
         </thead>
         <tbody>
-          {dev.physicalIfaces().map((i) => {
+          {dev.allPorts().map((i) => {
             const peer = engine.peer(dev.id, i.name);
             const pd = peer && engine.devices.get(peer.dev);
+            const mgmt = i.media === 'console' || i.media === 'rs232';
             const up = dev.lineUp(i.name);
+            const dce = engine.isDce(dev.id, i.name);
             return (
               <tr key={i.name}>
                 <td>{i.name}</td>
+                <td className="muted">{i.media === 'rs232' ? 'RS-232' : i.media === 'serial' ? `Serial${dce === null ? '' : dce ? ' (DCE)' : ' (DTE)'}` : i.media === 'fiber' ? 'Fiber' : i.media === 'console' ? 'Console' : `${i.speed >= 1000 ? 'Gigabit' : i.speed >= 100 ? 'Fast' : ''} Ethernet`.trim()}</td>
                 <td>
-                  <span className={`dot ${up ? 'up' : 'down'}`} /> {up ? 'Up' : i.linkId ? 'Down' : 'Empty'}
+                  {mgmt ? (
+                    i.linkId ? 'Console cable' : 'Empty'
+                  ) : (
+                    <>
+                      <span className={`dot ${up ? 'up' : 'down'}`} /> {up ? 'Up' : i.linkId ? 'Down' : 'Empty'}
+                    </>
+                  )}
                 </td>
                 <td>{pd ? `${pd.hostname} ${peer!.iface}` : ''}</td>
-                <td className="mono">{fmtMacDot(i.mac)}</td>
               </tr>
             );
           })}
@@ -350,8 +361,9 @@ function IfaceForm({ dev, i, run }: { dev: Router | Switch; i: Iface; run: (l: s
   const [ip, setIp] = useState(i.ip !== undefined ? fmtIp(i.ip) : '');
   const [mask, setMask] = useState(i.mask !== undefined ? fmtIp(i.mask) : '');
   const st = statusOf(dev, i);
-  const l3 = dev instanceof Router || i.sviVlan !== undefined;
-  const sw = dev instanceof Switch && i.physical;
+  const l3 = dev instanceof Router || i.sviVlan !== undefined || !!i.routed;
+  const sw = dev instanceof Switch && i.physical && !i.routed;
+  const dce = engine.isDce(dev.id, i.name);
   const pre = [`interface ${i.name}`];
   const ipOk = parseIp(ip) !== null && parseMask(mask) !== null;
   return (
@@ -399,6 +411,31 @@ function IfaceForm({ dev, i, run }: { dev: Router | Switch; i: Iface; run: (l: s
               </button>
             )}
           </div>
+          {i.media === 'serial' && (
+            <>
+              <Field label="Clock rate">
+                <select
+                  value={i.clockRate ?? ''}
+                  disabled={dce === false}
+                  onChange={(e) => run([...pre, e.target.value ? `clock rate ${e.target.value}` : 'no clock rate', 'exit'])}
+                >
+                  <option value="">Not set</option>
+                  {[9600, 56000, 64000, 128000, 1000000, 2000000, 4000000].map((r) => (
+                    <option key={r} value={r}>
+                      {r.toLocaleString()} bit/s
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <p className="muted small">{dce === null ? 'No serial cable connected.' : dce ? 'This end is the DCE, so it must provide the clock rate.' : 'This end is the DTE; the clock comes from the other end.'}</p>
+              <Field label="Encapsulation">
+                <select value={i.encap ?? 'hdlc'} onChange={(e) => run([...pre, `encapsulation ${e.target.value}`, 'exit'])}>
+                  <option value="hdlc">HDLC</option>
+                  <option value="ppp">PPP</option>
+                </select>
+              </Field>
+            </>
+          )}
           {i.parent && <p className="muted small">Sub-interface: VLAN {i.dot1q ?? 'not set'} — set it in the CLI with <code>encapsulation dot1Q</code>.</p>}
         </>
       )}
@@ -477,8 +514,32 @@ function HostConfigTab({ dev }: { dev: Host }) {
   );
 }
 
+function NameOnlyConfig({ dev }: { dev: Device }) {
+  const [name, setName] = useState(dev.hostname);
+  return (
+    <div className="pad">
+      <h3>Settings</h3>
+      <Field label="Display name">
+        <input value={name} onChange={(e) => setName(e.target.value)} />
+        <button
+          className="btn"
+          disabled={!name.trim() || name === dev.hostname}
+          onClick={() => {
+            dev.hostname = name.trim();
+            engine.bump();
+            markDirty();
+          }}
+        >
+          Apply
+        </button>
+      </Field>
+      <p className="muted small">A hub has nothing to configure. It repeats every frame it receives out of all its other ports.</p>
+    </div>
+  );
+}
+
 function DesktopTab({ dev }: { dev: Host }) {
-  const [app, setApp] = useState<'home' | 'ip' | 'cmd'>('home');
+  const [app, setApp] = useState<'home' | 'ip' | 'cmd' | 'term'>('home');
   if (app === 'home') {
     return (
       <div className="desktop">
@@ -490,6 +551,12 @@ function DesktopTab({ dev }: { dev: Host }) {
           <span className="app-icon cmd">C:\&gt;</span>
           Command Prompt
         </button>
+        {dev.mgmt.has('RS232') && (
+          <button className="app-tile" onClick={() => setApp('term')}>
+            <span className="app-icon term">&gt;_</span>
+            Terminal
+          </button>
+        )}
       </div>
     );
   }
@@ -500,17 +567,44 @@ function DesktopTab({ dev }: { dev: Host }) {
           Desktop
         </button>
         <span>/</span>
-        <span>{app === 'ip' ? 'IP Configuration' : 'Command Prompt'}</span>
+        <span>{app === 'ip' ? 'IP Configuration' : app === 'term' ? 'Terminal' : 'Command Prompt'}</span>
       </div>
       {app === 'ip' ? (
         <div className="pad">
           <IpConfigForm dev={dev} />
         </div>
+      ) : app === 'term' ? (
+        <ConsoleTerminal dev={dev} />
       ) : (
         <Terminal shell={shellFor(dev)} />
       )}
     </div>
   );
+}
+
+/** Terminal app: talks to whatever router or switch the PC's RS-232 port is cabled to. */
+function ConsoleTerminal({ dev }: { dev: Host }) {
+  useUi((s) => s.engineVersion);
+  const peer = engine.peer(dev.id, 'RS232');
+  const target = peer ? engine.devices.get(peer.dev) : undefined;
+  if (!target || !(target instanceof Router || target instanceof Switch)) {
+    return (
+      <div className="pad">
+        <h3>No console connection</h3>
+        <p className="muted">Connect a Console cable from this PC's RS-232 port to the Console port of a router or switch, then open Terminal again.</p>
+        <p className="muted small">Settings: 9600 bits per second, 8 data bits, no parity, 1 stop bit, no flow control.</p>
+      </div>
+    );
+  }
+  if (!target.powered) {
+    return (
+      <div className="pad">
+        <h3>{target.hostname} is turned off</h3>
+        <p className="muted">Turn it on from its Physical tab to use the console.</p>
+      </div>
+    );
+  }
+  return <Terminal shell={shellFor(target)} />;
 }
 
 function IpConfigForm({ dev }: { dev: Host }) {

@@ -1,14 +1,22 @@
 import { cloneFrame, describeFrame, pduKind, type Frame, type PduKind } from './packets';
 
-export type DeviceKind = 'pc' | 'laptop' | 'server' | 'switch' | 'router';
-export type CableType = 'straight' | 'cross' | 'auto';
+export type DeviceKind = 'pc' | 'laptop' | 'server' | 'printer' | 'phone' | 'switch' | 'l3switch' | 'hub' | 'router';
+export type CableType = 'straight' | 'cross' | 'auto' | 'fiber' | 'serial-dce' | 'serial-dte' | 'console';
+export type Media = 'copper' | 'fiber' | 'serial' | 'console' | 'rs232';
 
 export interface Iface {
   name: string;
   mac: string;
   adminUp: boolean;
   physical: boolean;
-  speed: number; // Mbps
+  speed: number; // Mbps (serial: kbit/s line rate)
+  media?: Media; // default copper
+  // serial
+  clockRate?: number;
+  encap?: 'hdlc' | 'ppp';
+  bandwidth?: number;
+  // multilayer switch routed port
+  routed?: boolean;
   ip?: number;
   mask?: number;
   description?: string;
@@ -38,6 +46,8 @@ export interface Link {
   a: LinkEnd;
   b: LinkEnd;
   cable: CableType;
+  /** For serial cables: which end is the DCE (provides clocking). */
+  dce?: 'a' | 'b';
 }
 
 export interface PduEvent {
@@ -76,6 +86,9 @@ export abstract class Device {
   x = 0;
   y = 0;
   ifaces = new Map<string, Iface>();
+  /** Console / RS-232 ports: cabled, but never carry frames. */
+  mgmt = new Map<string, Iface>();
+  powered = true;
   engine!: Engine;
   private lineCache = new Map<string, boolean>();
   consoleSink: ((text: string) => void) | null = null;
@@ -95,7 +108,28 @@ export abstract class Device {
     return [...this.ifaces.values()].filter((i) => i.physical);
   }
 
+  /** Every cable-able port, data and management. */
+  allPorts(): Iface[] {
+    return [...this.physicalIfaces(), ...this.mgmt.values()];
+  }
+
+  port(name: string): Iface | undefined {
+    return this.ifaces.get(name) ?? this.mgmt.get(name);
+  }
+
+  /** Turn the device on or off. Off means every port is dark. */
+  setPower(on: boolean) {
+    if (this.powered === on) return;
+    this.powered = on;
+    this.onPower(on);
+    this.engine?.refreshAll();
+    this.engine?.bump();
+  }
+
+  protected onPower(_on: boolean): void {}
+
   lineUp(name: string): boolean {
+    if (!this.powered) return false;
     const i = this.ifaces.get(name);
     if (!i || !i.adminUp) return false;
     if (i.parent) return this.lineUp(i.parent);
@@ -138,8 +172,34 @@ export abstract class Device {
 }
 
 export function deviceGroup(kind: DeviceKind): 'X' | 'N' {
-  return kind === 'switch' ? 'X' : 'N';
+  return kind === 'switch' || kind === 'l3switch' || kind === 'hub' ? 'X' : 'N';
 }
+
+export function mediaOf(i: Iface): Media {
+  return i.media ?? 'copper';
+}
+
+/** Which cable a pair of ports needs, or null if no cable joins them. */
+export function cableFor(a: Device, ia: Iface, b: Device, ib: Iface): CableType | null {
+  const ma = mediaOf(ia);
+  const mb = mediaOf(ib);
+  if ((ma === 'console' && mb === 'rs232') || (ma === 'rs232' && mb === 'console')) return 'console';
+  if (ma !== mb) return null;
+  if (ma === 'fiber') return 'fiber';
+  if (ma === 'serial') return 'serial-dce';
+  if (ma === 'copper') return deviceGroup(a.kind) === deviceGroup(b.kind) ? 'cross' : 'straight';
+  return null;
+}
+
+export const CABLE_LABEL: Record<CableType, string> = {
+  auto: 'Automatic',
+  straight: 'Copper straight-through',
+  cross: 'Copper cross-over',
+  fiber: 'Fiber',
+  'serial-dce': 'Serial DCE',
+  'serial-dte': 'Serial DTE',
+  console: 'Console',
+};
 
 export class Engine {
   devices = new Map<string, Device>();
@@ -179,11 +239,19 @@ export class Engine {
     const db = this.devices.get(b.dev);
     if (!da || !db) return 'Device not found';
     if (a.dev === b.dev) return 'A device cannot be cabled to itself';
-    const ia = da.ifaces.get(a.iface);
-    const ib = db.ifaces.get(b.iface);
+    const ia = da.port(a.iface);
+    const ib = db.port(b.iface);
     if (!ia || !ib) return 'Port not found';
     if (ia.linkId || ib.linkId) return 'That port is already in use';
-    const link: Link = { id, a, b, cable };
+    const need = cableFor(da, ia, db, ib);
+    if (!need) return `A cable can't join ${a.iface} (${mediaOf(ia)}) to ${b.iface} (${mediaOf(ib)}).`;
+    let type = cable;
+    if (cable === 'auto') type = need;
+    const fam = (c: CableType) => (c === 'straight' || c === 'cross' ? 'copper' : c.startsWith('serial') ? 'serial' : c);
+    if (fam(type) !== fam(need)) return `${CABLE_LABEL[type]} cable doesn't fit those ports. They need a ${CABLE_LABEL[need].toLowerCase()} cable.`;
+    const link: Link = { id, a, b, cable: type };
+    if (type === 'serial-dce') link.dce = 'a';
+    else if (type === 'serial-dte') link.dce = 'b';
     ia.linkId = id;
     ib.linkId = id;
     this.links.set(id, link);
@@ -196,7 +264,7 @@ export class Engine {
     const l = this.links.get(linkId);
     if (!l) return;
     for (const end of [l.a, l.b]) {
-      const i = this.devices.get(end.dev)?.ifaces.get(end.iface);
+      const i = this.devices.get(end.dev)?.port(end.iface);
       if (i) i.linkId = undefined;
     }
     this.links.delete(linkId);
@@ -205,24 +273,54 @@ export class Engine {
   }
 
   cableOk(l: Link): boolean {
-    if (l.cable === 'auto') return true;
+    if (l.cable === 'auto' || l.cable === 'fiber' || l.cable === 'console' || l.cable.startsWith('serial')) return true;
     const ka = this.devices.get(l.a.dev)!.kind;
     const kb = this.devices.get(l.b.dev)!.kind;
     const same = deviceGroup(ka) === deviceGroup(kb);
     return l.cable === 'cross' ? same : !same;
   }
 
-  physUp(d: Device, i: Iface): boolean {
-    if (!i.linkId) return false;
+  /** The DCE end of a serial link, if any. */
+  dceEnd(l: Link): LinkEnd | null {
+    if (!l.dce) return null;
+    return l.dce === 'a' ? l.a : l.b;
+  }
+
+  isDce(devId: string, ifName: string): boolean | null {
+    const i = this.devices.get(devId)?.port(ifName);
+    const l = i?.linkId ? this.links.get(i.linkId) : undefined;
+    if (!l || !l.dce) return null;
+    const e = this.dceEnd(l)!;
+    return e.dev === devId && e.iface === ifName;
+  }
+
+  /** Physical layer is up: cabled, right cable, both ends powered and enabled. */
+  physLinkUp(d: Device, i: Iface): boolean {
+    if (!i.linkId || !d.powered) return false;
     const l = this.links.get(i.linkId);
-    if (!l || !this.cableOk(l)) return false;
+    if (!l || l.cable === 'console' || !this.cableOk(l)) return false;
     const other = l.a.dev === d.id && l.a.iface === i.name ? l.b : l.a;
-    const oi = this.devices.get(other.dev)?.ifaces.get(other.iface);
-    return !!oi && oi.adminUp;
+    const od = this.devices.get(other.dev);
+    const oi = od?.ifaces.get(other.iface);
+    return !!od && od.powered && !!oi && oi.adminUp;
+  }
+
+  physUp(d: Device, i: Iface): boolean {
+    if (!this.physLinkUp(d, i)) return false;
+    if (mediaOf(i) === 'serial') {
+      const l = this.links.get(i.linkId!)!;
+      const other = l.a.dev === d.id && l.a.iface === i.name ? l.b : l.a;
+      const oi = this.devices.get(other.dev)!.ifaces.get(other.iface)!;
+      const dce = this.dceEnd(l)!;
+      const dceIf = dce.dev === d.id && dce.iface === i.name ? i : oi;
+      if (!dceIf.clockRate) return false; // no clocking: line protocol stays down
+      if ((i.encap ?? 'hdlc') !== (oi.encap ?? 'hdlc')) return false;
+    }
+    return true;
   }
 
   peer(devId: string, ifName: string): LinkEnd | null {
-    const i = this.devices.get(devId)?.ifaces.get(ifName);
+    const i = this.devices.get(devId)?.port(ifName);
     if (!i?.linkId) return null;
     const l = this.links.get(i.linkId)!;
     return l.a.dev === devId && l.a.iface === ifName ? l.b : l.a;
