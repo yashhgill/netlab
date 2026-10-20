@@ -1,0 +1,138 @@
+import { useSyncExternalStore } from 'react';
+import { Engine, type CableType, type DeviceKind, type PduEvent } from '../engine/engine';
+import type { PduKind } from '../engine/packets';
+import type { Note } from '../engine/topology';
+
+export const engine = new Engine();
+// expose for debugging in devtools
+(globalThis as Record<string, unknown>).netlab = engine;
+
+export type Tool = 'select' | 'delete' | 'note' | 'pdu' | 'cable';
+export type Tab = 'physical' | 'config' | 'cli' | 'desktop' | 'services';
+
+export interface DeviceWin {
+  devId: string;
+  tab: Tab;
+  x: number;
+  y: number;
+  z: number;
+}
+
+export interface Scenario {
+  id: number;
+  src: string;
+  dst: string;
+  dstIp: number;
+  status: 'Ready' | 'In progress' | 'Successful' | 'Failed';
+  fired: number;
+}
+
+export interface Anim {
+  pdus: PduEvent[];
+  start: number;
+  dur: number;
+}
+
+export interface UiState {
+  tool: Tool;
+  cable: CableType;
+  wins: DeviceWin[];
+  topZ: number;
+  scenarios: Scenario[];
+  notes: Note[];
+  playing: boolean;
+  speed: number; // ms per step
+  filters: Record<PduKind, boolean>;
+  fileName: string;
+  dirty: boolean;
+  showLabels: boolean;
+  selected: { kind: 'device' | 'link' | 'note'; id: string } | null;
+  cableFrom: { dev: string; iface: string } | null;
+  portPicker: { dev: string; x: number; y: number } | null;
+  pduSrc: string | null;
+  toast: { text: string; tone: 'info' | 'error' } | null;
+  pduDetail: PduEvent | null;
+  anim: Anim | null;
+  engineVersion: number;
+  frame: number;
+  menu: string | null;
+  dialog: 'about' | 'shortcuts' | 'new' | null;
+  placing: DeviceKind | null;
+}
+
+let state: UiState = {
+  tool: 'select',
+  cable: 'auto',
+  wins: [],
+  topZ: 10,
+  scenarios: [],
+  notes: [],
+  playing: false,
+  speed: 700,
+  filters: { ARP: true, ICMP: true, DHCP: true },
+  fileName: 'Untitled',
+  dirty: false,
+  showLabels: true,
+  selected: null,
+  cableFrom: null,
+  portPicker: null,
+  pduSrc: null,
+  toast: null,
+  pduDetail: null,
+  anim: null,
+  engineVersion: 0,
+  frame: 0,
+  menu: null,
+  dialog: null,
+  placing: null,
+};
+
+const subs = new Set<() => void>();
+
+export function getState() {
+  return state;
+}
+
+export function setState(p: Partial<UiState> | ((s: UiState) => Partial<UiState>)) {
+  const patch = typeof p === 'function' ? p(state) : p;
+  state = { ...state, ...patch };
+  for (const s of subs) s();
+}
+
+export function subscribe(fn: () => void) {
+  subs.add(fn);
+  return () => {
+    subs.delete(fn);
+  };
+}
+
+export function useUi<T>(sel: (s: UiState) => T): T {
+  return useSyncExternalStore(subscribe, () => sel(state));
+}
+
+let toastTimer: ReturnType<typeof setTimeout> | undefined;
+export function toast(text: string, tone: 'info' | 'error' = 'info') {
+  setState({ toast: { text, tone } });
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => setState({ toast: null }), 3200);
+}
+
+export function openWindow(devId: string, tab?: Tab) {
+  setState((s) => {
+    const z = s.topZ + 1;
+    const existing = s.wins.find((w) => w.devId === devId);
+    if (existing) return { topZ: z, wins: s.wins.map((w) => (w.devId === devId ? { ...w, z, tab: tab ?? w.tab } : w)) };
+    const d = engine.devices.get(devId);
+    const defTab: Tab = tab ?? (d && (d.kind === 'router' || d.kind === 'switch') ? 'cli' : 'desktop');
+    const n = s.wins.length;
+    return { topZ: z, wins: [...s.wins, { devId, tab: defTab, x: 120 + n * 28, y: 70 + n * 28, z }] };
+  });
+}
+
+export function closeWindow(devId: string) {
+  setState((s) => ({ wins: s.wins.filter((w) => w.devId !== devId) }));
+}
+
+export function markDirty() {
+  if (!state.dirty) setState({ dirty: true });
+}
