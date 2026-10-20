@@ -58,6 +58,7 @@ export interface UiState {
   menu: string | null;
   dialog: 'about' | 'shortcuts' | 'new' | null;
   placing: DeviceKind | null;
+  ask: { text: string; ok: string; resolve: (v: boolean) => void } | null;
 }
 
 let state: UiState = {
@@ -85,6 +86,7 @@ let state: UiState = {
   menu: null,
   dialog: null,
   placing: null,
+  ask: null,
 };
 
 const subs = new Set<() => void>();
@@ -135,4 +137,9 @@ export function closeWindow(devId: string) {
 
 export function markDirty() {
   if (!state.dirty) setState({ dirty: true });
+}
+
+/** In-app confirmation (native confirm() is unavailable in some embeds). */
+export function askConfirm(text: string, ok = 'Discard changes'): Promise<boolean> {
+  return new Promise((resolve) => setState({ ask: { text, ok, resolve } }));
 }

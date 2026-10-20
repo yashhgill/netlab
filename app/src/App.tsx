@@ -61,6 +61,7 @@ export default function App() {
     const ex = params.get('example');
     if (ex) loadExample(ex);
     else if (restoreAutosave()) setTimeout(() => canvasApi.fit(), 60);
+    else if (import.meta.env.VITE_FIRST_EXAMPLE) loadExample(import.meta.env.VITE_FIRST_EXAMPLE);
     const close = () => setState({ menu: null });
     window.addEventListener('pointerdown', close);
     const warn = (e: BeforeUnloadEvent) => {
@@ -92,6 +93,7 @@ export default function App() {
         </div>
       )}
       {dialog && <Dialog kind={dialog} />}
+      <AskDialog />
     </div>
   );
 }
@@ -142,6 +144,30 @@ function Dialog({ kind }: { kind: 'about' | 'shortcuts' | 'new' }) {
             </tbody>
           </table>
         )}
+      </div>
+    </div>
+  );
+}
+
+function AskDialog() {
+  const ask = useUi((s) => s.ask);
+  if (!ask) return null;
+  const done = (v: boolean) => {
+    setState({ ask: null });
+    ask.resolve(v);
+  };
+  return (
+    <div className="modal-back" onPointerDown={() => done(false)}>
+      <div className="modal" role="alertdialog" aria-label="Confirm" onPointerDown={(e) => e.stopPropagation()}>
+        <p style={{ margin: '0 0 18px', fontSize: 15 }}>{ask.text}</p>
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+          <button className="btn" onClick={() => done(false)} autoFocus>
+            Keep editing
+          </button>
+          <button className="btn primary" onClick={() => done(true)}>
+            {ask.ok}
+          </button>
+        </div>
       </div>
     </div>
   );

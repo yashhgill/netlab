@@ -16,6 +16,8 @@ import {
   updateNote,
 } from './actions';
 import { DeviceArt } from './icons';
+import { EXAMPLES } from '../examples';
+import { loadExample } from './TopBar';
 import { engine, getState, markDirty, openWindow, setState, toast, useUi } from './store';
 
 const ICON = 56;
@@ -462,7 +464,14 @@ export function Canvas() {
       {!devices.length && !placing && (
         <div className="empty-hint">
           <p className="empty-title">Start a topology</p>
-          <p>Drag a router, switch or PC from the device bar below, or open an example lab from File.</p>
+          <p>Drag a router, switch or PC from the device bar below, or open an example lab.</p>
+          <div className="empty-examples">
+            {EXAMPLES.map((ex) => (
+              <button key={ex.id} className="btn" onClick={() => loadExample(ex.id)}>
+                {ex.title}
+              </button>
+            ))}
+          </div>
         </div>
       )}
 

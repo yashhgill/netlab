@@ -6,7 +6,7 @@ import { isDesktop, openText, saveText } from '../platform';
 import { currentFile, deleteSelected, newTopology, openTopology, setMode } from './actions';
 import { canvasApi } from './Canvas';
 import { UiIcon } from './icons';
-import { engine, getState, setState, toast, useUi, type Tool } from './store';
+import { askConfirm, engine, getState, setState, toast, useUi, type Tool } from './store';
 
 export async function doSave() {
   const name = await saveText(`${getState().fileName}.nlab`, JSON.stringify(currentFile(), null, 1));
@@ -17,7 +17,7 @@ export async function doSave() {
 }
 
 export async function doOpen() {
-  if (getState().dirty && !confirm('Discard unsaved changes to this topology?')) return;
+  if (getState().dirty && !(await askConfirm('This topology has unsaved changes. Discard them?'))) return;
   const f = await openText();
   if (!f) return;
   try {
@@ -28,15 +28,15 @@ export async function doOpen() {
   }
 }
 
-export function doNew() {
-  if (getState().dirty && !confirm('Discard unsaved changes to this topology?')) return;
+export async function doNew() {
+  if (getState().dirty && !(await askConfirm('This topology has unsaved changes. Discard them?'))) return;
   newTopology();
 }
 
-export function loadExample(id: string) {
+export async function loadExample(id: string) {
   const ex = EXAMPLES.find((x) => x.id === id);
   if (!ex) return;
-  if (getState().dirty && !confirm('Discard unsaved changes to this topology?')) return;
+  if (getState().dirty && !(await askConfirm('This topology has unsaved changes. Discard them?'))) return;
   // build in a scratch engine, then load through the normal file path so ids/notes are consistent
   const scratch = new Engine();
   const notes = ex.build(scratch);

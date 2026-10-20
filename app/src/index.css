@@ -474,6 +474,14 @@ kbd {
   margin: 0;
 }
 
+.empty-examples {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 18px;
+  pointer-events: auto;
+}
+
 .port-picker {
   position: absolute;
   z-index: 40;
