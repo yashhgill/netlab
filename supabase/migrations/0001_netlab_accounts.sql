@@ -105,8 +105,8 @@ begin
 end;
 $$;
 
--- Called by the server (service role) for each AI request; returns today's count.
-create or replace function public.bump_ai_usage(uid uuid)
+-- Called by the server, as the signed-in user, for each AI request; returns today's count.
+create or replace function public.bump_my_ai_usage()
 returns integer
 language plpgsql
 security definer
@@ -115,15 +115,19 @@ as $$
 declare
   n integer;
 begin
+  if auth.uid() is null then
+    raise exception 'Not signed in';
+  end if;
   insert into public.ai_usage (user_id, day, count)
-    values (uid, (now() at time zone 'utc')::date, 1)
+    values (auth.uid(), (now() at time zone 'utc')::date, 1)
     on conflict (user_id, day) do update set count = public.ai_usage.count + 1
     returning count into n;
   return n;
 end;
 $$;
 
-revoke execute on function public.bump_ai_usage(uuid) from public, anon, authenticated;
+revoke execute on function public.bump_my_ai_usage() from public, anon;
+grant execute on function public.bump_my_ai_usage() to authenticated;
 
 -- Row level security
 alter table public.profiles enable row level security;

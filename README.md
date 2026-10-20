@@ -68,8 +68,7 @@ The website is a Cloudflare Pages project (`wrangler.toml`): the download page a
 
 1. Create a Supabase project and run the migration in its SQL editor. In Authentication > URL Configuration, set the site URL to `https://netlab.harnova.my/app/` and add it to the redirect URLs.
 2. Copy `.env.web.example` to `.env.web` and fill in the project URL, anon key and your DuitNow details. Put your DuitNow QR image at `brand/duitnow-qr.png`.
-3. Put the Supabase URL and anon key under `[vars]` in `wrangler.toml`, then set the secrets:
-   `npx wrangler pages secret put GROQ_API_KEY` and `npx wrangler pages secret put SUPABASE_SERVICE_ROLE_KEY`.
+3. Put the Supabase URL and anon key under `[vars]` in `wrangler.toml`, then add the `GROQ_API_KEY` secret in the Cloudflare Pages project settings (or `npx wrangler pages secret put GROQ_API_KEY`).
 4. `./build-web.sh && npx wrangler pages deploy`
 5. Sign up on the site, then make yourself admin in the SQL editor:
    `update public.profiles set is_admin = true where email = 'you@example.com';`

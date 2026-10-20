@@ -5,7 +5,6 @@ const env = {
   GROQ_API_KEY: 'gsk_test',
   SUPABASE_URL: 'https://proj.supabase.co',
   SUPABASE_ANON_KEY: 'anon',
-  SUPABASE_SERVICE_ROLE_KEY: 'service',
 };
 
 function mockFetch(profile: { pro_until: string | null; is_admin: boolean }, groqReplies: unknown[]) {
@@ -17,7 +16,7 @@ function mockFetch(profile: { pro_until: string | null; is_admin: boolean }, gro
         : new Response('{}', { status: 401 });
     }
     if (url.includes('/rest/v1/profiles')) return new Response(JSON.stringify([profile]));
-    if (url.includes('/rpc/bump_ai_usage')) return new Response('3');
+    if (url.includes('/rpc/bump_my_ai_usage')) return new Response('3');
     if (url.startsWith('https://api.groq.com')) {
       groqCalls.push(JSON.parse(String(init?.body)));
       return new Response(JSON.stringify({ choices: [{ message: groqReplies.shift() }] }));

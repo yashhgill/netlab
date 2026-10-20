@@ -7,8 +7,10 @@
  *    and returns a reply plus a list of actions the app can preview and apply.
  *
  * Settings (wrangler.toml [vars] or Cloudflare Pages > Settings > Variables):
- *   GROQ_API_KEY (secret), SUPABASE_SERVICE_ROLE_KEY (secret),
- *   SUPABASE_URL, SUPABASE_ANON_KEY, GROQ_MODEL (optional), AI_DAILY_LIMIT (optional)
+ *   GROQ_API_KEY (secret), SUPABASE_URL, SUPABASE_ANON_KEY, GROQ_MODEL (optional), AI_DAILY_LIMIT (optional)
+ *
+ * Supabase is called with the user's own sign-in token, so row level security
+ * applies and no service key is needed.
  */
 import { subnetInfo, vlsm } from '../../app/src/engine/vlsm';
 
@@ -17,7 +19,6 @@ interface Env {
   GROQ_MODEL?: string;
   SUPABASE_URL: string;
   SUPABASE_ANON_KEY: string;
-  SUPABASE_SERVICE_ROLE_KEY: string;
   AI_DAILY_LIMIT?: string;
 }
 
@@ -110,12 +111,12 @@ async function getUser(env: Env, token: string) {
   return (await r.json()) as { id: string; email?: string };
 }
 
-async function service(env: Env, path: string, init: RequestInit = {}) {
+async function asUser(env: Env, token: string, path: string, init: RequestInit = {}) {
   return fetch(`${env.SUPABASE_URL}/rest/v1/${path}`, {
     ...init,
     headers: {
-      apikey: env.SUPABASE_SERVICE_ROLE_KEY,
-      authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+      apikey: env.SUPABASE_ANON_KEY,
+      authorization: `Bearer ${token}`,
       'content-type': 'application/json',
       ...(init.headers ?? {}),
     },
@@ -162,13 +163,13 @@ export async function onRequestPost({ request, env }: Ctx): Promise<Response> {
   const user = await getUser(env, token);
   if (!user) return json({ error: 'Your session has expired. Sign in again.', code: 'auth' }, 401);
 
-  const pr = await service(env, `profiles?id=eq.${user.id}&select=pro_until,is_admin`);
+  const pr = await asUser(env, token, `profiles?id=eq.${user.id}&select=pro_until,is_admin`);
   const prof = ((await pr.json().catch(() => [])) as { pro_until: string | null; is_admin: boolean }[])[0];
   const isPro = !!prof && (prof.is_admin || (!!prof.pro_until && new Date(prof.pro_until) > new Date()));
   if (!isPro) return json({ error: 'The AI assistant is part of NetLab Pro.', code: 'pro' }, 402);
 
   const limit = Number(env.AI_DAILY_LIMIT || 150);
-  const ur = await service(env, 'rpc/bump_ai_usage', { method: 'POST', body: JSON.stringify({ uid: user.id }) });
+  const ur = await asUser(env, token, 'rpc/bump_my_ai_usage', { method: 'POST', body: '{}' });
   const used = Number(await ur.json().catch(() => 0));
   if (!prof.is_admin && used > limit) return json({ error: `You've used today's ${limit} AI requests. The limit resets at 8am Malaysia time.`, code: 'limit' }, 429);
 

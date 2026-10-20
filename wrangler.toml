@@ -10,4 +10,4 @@ compatibility_date = "2026-10-01"
 GROQ_MODEL = "qwen/qwen3.8-27b"
 AI_DAILY_LIMIT = "150"
 # SUPABASE_URL and SUPABASE_ANON_KEY are filled in during setup.
-# Secrets (set with `npx wrangler pages secret put NAME`): GROQ_API_KEY, SUPABASE_SERVICE_ROLE_KEY
+# Secret (Cloudflare dashboard > the netlab project > Settings > Variables and secrets): GROQ_API_KEY
