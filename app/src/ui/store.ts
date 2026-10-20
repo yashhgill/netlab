@@ -64,6 +64,7 @@ export interface UiState {
   inspects: { id: number; devId: string; table: InspectTable; x: number; y: number }[];
   inspectMenu: { devId: string; x: number; y: number } | null;
   ask: { text: string; ok: string; resolve: (v: boolean) => void } | null;
+  aiOpen: boolean;
 }
 
 let state: UiState = {
@@ -95,6 +96,7 @@ let state: UiState = {
   inspects: [],
   inspectMenu: null,
   ask: null,
+  aiOpen: false,
 };
 
 const subs = new Set<() => void>();

@@ -29,10 +29,17 @@ interface View {
   k: number;
 }
 
-export let canvasApi: { fit: () => void; zoom: (f: number) => void; centerWorld: () => { x: number; y: number } } = {
+export let canvasApi: {
+  fit: () => void;
+  zoom: (f: number) => void;
+  centerWorld: () => { x: number; y: number };
+  /** Place a device where a finger or mouse was released; false if the point is off the workspace. */
+  dropAt: (kind: DeviceKind, model: string, clientX: number, clientY: number) => boolean;
+} = {
   fit: () => {},
   zoom: () => {},
   centerWorld: () => ({ x: 400, y: 300 }),
+  dropAt: () => false,
 };
 
 export function Canvas() {
@@ -97,8 +104,69 @@ export function Canvas() {
         if (!r) return { x: 400, y: 300 };
         return { x: (r.width / 2 - v.x) / v.k, y: (r.height / 2 - v.y) / v.k };
       },
+      dropAt: (kind, model, cx, cy) => {
+        const r = svgRef.current?.getBoundingClientRect();
+        if (!r || cx < r.left || cx > r.right || cy < r.top || cy > r.bottom) return false;
+        const under = document.elementFromPoint(cx, cy);
+        if (under && !svgRef.current!.contains(under)) return false; // released over a window or panel
+        const w = toWorld(cx, cy);
+        placeDevice(kind, w.x, w.y, model);
+        return true;
+      },
     };
   });
+
+  // Two-finger pinch to zoom and pan (touch screens). Any one-finger gesture in progress is cancelled.
+  useEffect(() => {
+    const el = svgRef.current!;
+    const pts = new Map<number, { x: number; y: number }>();
+    let pinch: { d: number; cx: number; cy: number } | null = null;
+    const center = () => {
+      const [a, b] = [...pts.values()];
+      return { cx: (a.x + b.x) / 2, cy: (a.y + b.y) / 2, d: Math.hypot(a.x - b.x, a.y - b.y) || 1 };
+    };
+    const down = (e: PointerEvent) => {
+      if (e.pointerType !== 'touch') return;
+      pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (pts.size === 2) {
+        drag.current = null;
+        pinch = center();
+      }
+    };
+    const move = (e: PointerEvent) => {
+      if (!pts.has(e.pointerId)) return;
+      pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (pts.size === 2 && pinch) {
+        e.stopPropagation();
+        const c = center();
+        const r = el.getBoundingClientRect();
+        const f = c.d / pinch.d;
+        setView((v) => {
+          const k = Math.min(3, Math.max(0.25, v.k * f));
+          const sx = c.cx - r.left;
+          const sy = c.cy - r.top;
+          const wx = (pinch!.cx - r.left - v.x) / v.k;
+          const wy = (pinch!.cy - r.top - v.y) / v.k;
+          return { k, x: sx - wx * k, y: sy - wy * k };
+        });
+        pinch = c;
+      }
+    };
+    const up = (e: PointerEvent) => {
+      pts.delete(e.pointerId);
+      if (pts.size < 2) pinch = null;
+    };
+    el.addEventListener('pointerdown', down, true);
+    el.addEventListener('pointermove', move, true);
+    window.addEventListener('pointerup', up, true);
+    window.addEventListener('pointercancel', up, true);
+    return () => {
+      el.removeEventListener('pointerdown', down, true);
+      el.removeEventListener('pointermove', move, true);
+      window.removeEventListener('pointerup', up, true);
+      window.removeEventListener('pointercancel', up, true);
+    };
+  }, []);
 
   const zoomAt = (sx: number, sy: number, f: number) => {
     setView((v) => {
@@ -414,6 +482,7 @@ export function Canvas() {
                 onPointerMove={onMove}
                 onPointerUp={onUp}
                 onPointerEnter={(e) => {
+                  if (e.pointerType !== 'mouse') return;
                   clearTimeout(hoverTimer.current);
                   const r = svgRef.current!.getBoundingClientRect();
                   const sx = e.clientX - r.left;

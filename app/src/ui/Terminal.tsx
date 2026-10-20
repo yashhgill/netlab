@@ -24,6 +24,7 @@ export function Terminal({ shell, autoFocus = true }: { shell: Shell; autoFocus?
     if (e.key === 'Enter') {
       e.preventDefault();
       if (shell.busy()) return;
+      inputRef.current?.scrollIntoView({ block: 'nearest' });
       shell.submit(input);
       setInput('');
       setHIdx(null);
@@ -72,6 +73,13 @@ export function Terminal({ shell, autoFocus = true }: { shell: Shell; autoFocus?
   const busy = shell.busy();
   const secret = shell.secret();
 
+  /** On-screen keys for phones and tablets, whose keyboards lack Tab, arrows and Ctrl. */
+  const key = (k: 'Tab' | '?' | 'ArrowUp' | 'ArrowDown' | 'c' | 'z') => {
+    const ctrl = k === 'c' || k === 'z';
+    onKey({ key: k, ctrlKey: ctrl, shiftKey: false, preventDefault() {} } as unknown as React.KeyboardEvent<HTMLInputElement>);
+    inputRef.current?.focus();
+  };
+
   return (
     <div className="terminal" onMouseUp={() => !window.getSelection()?.toString() && inputRef.current?.focus()}>
       <div className="terminal-scroll" ref={scroller}>
@@ -82,16 +90,46 @@ export function Terminal({ shell, autoFocus = true }: { shell: Shell; autoFocus?
             ref={inputRef}
             className="terminal-input"
             value={secret ? '' : input}
-            onChange={(e) => !busy && setInput(secret ? input + e.target.value : e.target.value)}
+            onChange={(e) => {
+              if (busy) return;
+              const v = e.target.value;
+              // Phone keyboards often skip keydown, so a typed "?" arrives here instead.
+              if (!secret && shell.help && v.endsWith('?') && v.length === input.length + 1) {
+                shell.help(input);
+                force();
+                return;
+              }
+              setInput(secret ? input + v : v);
+            }}
             onKeyDown={onKey}
             spellCheck={false}
             autoCapitalize="off"
             autoComplete="off"
             autoCorrect="off"
+            enterKeyHint="send"
+            inputMode="text"
             aria-label="Command line"
             style={busy ? { opacity: 0 } : undefined}
           />
         </div>
+      </div>
+      <div className="term-keys" role="toolbar" aria-label="Terminal keys">
+        <button onPointerDown={(e) => e.preventDefault()} onClick={() => key('Tab')}>Tab</button>
+        <button onPointerDown={(e) => e.preventDefault()} onClick={() => key('?')}>?</button>
+        <button onPointerDown={(e) => e.preventDefault()} onClick={() => key('ArrowUp')} aria-label="Previous command">↑</button>
+        <button onPointerDown={(e) => e.preventDefault()} onClick={() => key('ArrowDown')} aria-label="Next command">↓</button>
+        <button onPointerDown={(e) => e.preventDefault()} onClick={() => key('c')}>Ctrl+C</button>
+        <button onPointerDown={(e) => e.preventDefault()} onClick={() => key('z')}>Ctrl+Z</button>
+        <button
+          className="enter"
+          onPointerDown={(e) => e.preventDefault()}
+          onClick={() => {
+            onKey({ key: 'Enter', ctrlKey: false, shiftKey: false, preventDefault() {} } as unknown as React.KeyboardEvent<HTMLInputElement>);
+            inputRef.current?.focus();
+          }}
+        >
+          Enter
+        </button>
       </div>
     </div>
   );

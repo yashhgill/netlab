@@ -9,6 +9,8 @@ import { InspectMenu, InspectWindows } from './ui/Inspect';
 import { UiIcon } from './ui/icons';
 import { engine, getState, setState, useUi } from './ui/store';
 import { isDesktop } from './platform';
+import { AiPanel } from './ui/AiPanel';
+import { AccountDialogs } from './account/AccountUi';
 
 function useEngineLoop() {
   useEffect(() => {
@@ -88,9 +90,11 @@ export default function App() {
           <DeviceWindows />
         </div>
         {sim && <SimPanel />}
+        <AiPanel />
       </main>
       <Dock />
       <PduDetail />
+      <AccountDialogs />
       {toast && (
         <div className={`toast ${toast.tone}`} role="status">
           {toast.text}

@@ -6,6 +6,7 @@ import { isDesktop, openText, saveText } from '../platform';
 import { currentFile, deleteSelected, newTopology, openTopology } from './actions';
 import { canvasApi } from './Canvas';
 import { UiIcon } from './icons';
+import { AccountButton } from '../account/AccountUi';
 import { askConfirm, engine, getState, setState, toast, useUi, type Tool } from './store';
 
 export async function doSave() {
@@ -207,7 +208,21 @@ export function TopBar() {
         {dirty && <span className="dirty" aria-label="Unsaved changes" />}
       </div>
 
+      <div className="topbar-right">
+        <AiButton />
+        <AccountButton />
+      </div>
     </header>
   );
 }
 
+
+function AiButton() {
+  const open = useUi((s) => s.aiOpen);
+  return (
+    <button className={`topbar-btn ai${open ? ' on' : ''}`} onClick={() => setState({ aiOpen: !open })} aria-pressed={open} aria-label="AI assistant" title="AI assistant and subnet calculator">
+      <UiIcon.sparkle />
+      <span>AI</span>
+    </button>
+  );
+}

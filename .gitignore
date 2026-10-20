@@ -4,3 +4,6 @@ dist/
 *.log
 app/src-tauri/target/
 app/src-tauri/gen/schemas/
+_site/
+.env.web
+.wrangler/

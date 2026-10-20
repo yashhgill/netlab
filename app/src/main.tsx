@@ -13,3 +13,8 @@ createRoot(document.getElementById('root')!).render(
     <App />
   </StrictMode>,
 );
+
+// Offline support for the web version (not needed inside the desktop app).
+if ('serviceWorker' in navigator && import.meta.env.PROD && !('__TAURI_INTERNALS__' in window) && location.protocol === 'https:') {
+  window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(() => {}));
+}

@@ -171,7 +171,11 @@ export function fireScenario(id: number) {
   stack.ping(
     sc.dstIp,
     { count: 1, timeout: 3000 },
-    (r) => update(r.kind === 'reply' ? 'Successful' : 'Failed'),
+    (r) => {
+      update(r.kind === 'reply' ? 'Successful' : 'Failed');
+      const d = describeScenario(sc);
+      toast(r.kind === 'reply' ? `Ping from ${d.a} to ${d.b} succeeded.` : `Ping from ${d.a} to ${d.b} failed.`, r.kind === 'reply' ? 'info' : 'error');
+    },
     () => {},
   );
 }

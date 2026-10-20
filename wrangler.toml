@@ -1,0 +1,13 @@
+# Cloudflare Pages project for netlab.harnova.my
+#   _site/        download page, with the simulator under /app/
+#   functions/    server code (the AI assistant at /api/ai)
+# Build with ./build-web.sh, then deploy with: npx wrangler pages deploy
+name = "netlab"
+pages_build_output_dir = "./_site"
+compatibility_date = "2026-10-01"
+
+[vars]
+GROQ_MODEL = "qwen/qwen3.8-27b"
+AI_DAILY_LIMIT = "150"
+# SUPABASE_URL and SUPABASE_ANON_KEY are filled in during setup.
+# Secrets (set with `npx wrangler pages secret put NAME`): GROQ_API_KEY, SUPABASE_SERVICE_ROLE_KEY

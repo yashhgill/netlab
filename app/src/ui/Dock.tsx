@@ -4,8 +4,62 @@ import { MODELS, type Category, type ModelSpec } from '../engine/models';
 import { describeScenario, fastForward, fireScenario, powerCycleAll, removeScenario, setMode } from './actions';
 import { CableSwatch, DeviceGlyph, UiIcon } from './icons';
 import { askConfirm, engine, setState, useUi } from './store';
+import { canvasApi } from './Canvas';
 
 type Top = 'network' | 'end' | 'connections';
+
+let dragJustEnded = false;
+
+/**
+ * Drag a device from the picker onto the workspace with mouse, pen or finger.
+ * A ghost icon follows the pointer; releasing over the workspace places the device.
+ */
+function startDeviceDrag(e: React.PointerEvent, m: ModelSpec) {
+  if (e.button !== 0) return;
+  const sx = e.clientX;
+  const sy = e.clientY;
+  let ghost: HTMLDivElement | null = null;
+  const src = (e.currentTarget as HTMLElement).querySelector('svg');
+  const move = (ev: PointerEvent) => {
+    if (!ghost) {
+      // touch: horizontal swipes scroll the picker, so only an upward drag picks a device up
+      const dx = ev.clientX - sx;
+      const dy = ev.clientY - sy;
+      if (Math.hypot(dx, dy) < 8) return;
+      if (ev.pointerType === 'touch' && !(dy < -8 && Math.abs(dy) > Math.abs(dx))) {
+        cleanup();
+        return;
+      }
+      ghost = document.createElement('div');
+      ghost.className = 'drag-ghost';
+      if (src) ghost.appendChild(src.cloneNode(true));
+      document.body.appendChild(ghost);
+    }
+    ev.preventDefault();
+    ghost.style.transform = `translate(${ev.clientX - 32}px, ${ev.clientY - 32}px)`;
+  };
+  const up = (ev: PointerEvent) => {
+    if (ghost) {
+      ghost.remove();
+      canvasApi.dropAt(m.kind, m.id, ev.clientX, ev.clientY);
+      dragJustEnded = true;
+      setTimeout(() => (dragJustEnded = false), 50);
+    }
+    cleanup();
+  };
+  const cleanup = () => {
+    window.removeEventListener('pointermove', move);
+    window.removeEventListener('pointerup', up);
+    window.removeEventListener('pointercancel', cancel);
+  };
+  const cancel = () => {
+    ghost?.remove();
+    cleanup();
+  };
+  window.addEventListener('pointermove', move, { passive: false });
+  window.addEventListener('pointerup', up);
+  window.addEventListener('pointercancel', cancel);
+}
 
 const SUBS: Record<Top, { id: Category; label: string; kind: ModelSpec['kind']; model: string }[]> = {
   network: [
@@ -95,14 +149,11 @@ export function Dock() {
                 <button
                   key={m.id}
                   className={`dock-item${placing && placingModel === m.id ? ' on' : ''}`}
-                  draggable
-                  onDragStart={(e) => {
-                    e.dataTransfer.setData('application/x-netlab-device', `${m.kind}|${m.id}`);
-                    e.dataTransfer.effectAllowed = 'copy';
+                  onPointerDown={(e) => startDeviceDrag(e, m)}
+                  onClick={() => {
+                    if (dragJustEnded) return;
+                    setState(placing && placingModel === m.id ? { placing: null, placingModel: null } : { placing: m.kind, placingModel: m.id, tool: 'select', cableFrom: null });
                   }}
-                  onClick={() =>
-                    setState(placing && placingModel === m.id ? { placing: null, placingModel: null } : { placing: m.kind, placingModel: m.id, tool: 'select', cableFrom: null })
-                  }
                   onMouseEnter={() => setHover(`${m.label}: ${m.detail}`)}
                   aria-label={`${m.label}, ${m.detail}`}
                 >

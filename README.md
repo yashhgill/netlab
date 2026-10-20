@@ -62,9 +62,23 @@ npm run tauri build
 2. Push a tag: `git tag v1.0.1 && git push origin v1.0.1`.
 3. The Release workflow builds `.dmg` (Apple silicon and Intel), `.exe`, `.msi`, `.AppImage` and `.deb` files and attaches them to a GitHub release. The download page reads the latest release from the GitHub API, so it updates on its own.
 
+## Web version, accounts and AI
+
+The website is a Cloudflare Pages project (`wrangler.toml`): the download page at `/`, the simulator at `/app/`, and the AI assistant at `/api/ai` (`functions/api/ai.ts`). Accounts and NetLab Pro use Supabase (`supabase/migrations/0001_netlab_accounts.sql`).
+
+1. Create a Supabase project and run the migration in its SQL editor. In Authentication > URL Configuration, set the site URL to `https://netlab.harnova.my/app/` and add it to the redirect URLs.
+2. Copy `.env.web.example` to `.env.web` and fill in the project URL, anon key and your DuitNow details. Put your DuitNow QR image at `brand/duitnow-qr.png`.
+3. Put the Supabase URL and anon key under `[vars]` in `wrangler.toml`, then set the secrets:
+   `npx wrangler pages secret put GROQ_API_KEY` and `npx wrangler pages secret put SUPABASE_SERVICE_ROLE_KEY`.
+4. `./build-web.sh && npx wrangler pages deploy`
+5. Sign up on the site, then make yourself admin in the SQL editor:
+   `update public.profiles set is_admin = true where email = 'you@example.com';`
+
+Users pay by DuitNow, submit their reference in the app, and you approve them from the account menu (Admin). Approving adds 1 or 12 months of Pro.
+
 ## Website
 
-The Website workflow publishes `site/` with the browser build at `/app/` to GitHub Pages on every push to `main`. To serve it at `netlab.harnova.my`, add a CNAME record pointing to `yashhgill.github.io` and set the custom domain in the repository's Pages settings.
+The site is served by Cloudflare Pages at `netlab.harnova.my` (custom domain set in the Pages project).
 
 ## License
 
