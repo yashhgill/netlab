@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Builds the website: download page at /, simulator at /app/.
-# Reads public settings from .env.web (VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY, VITE_DUITNOW_ID, ...).
+# Public settings come from app/.env.production; a local .env.web can override them.
 set -euo pipefail
 cd "$(dirname "$0")"
 if [ -f .env.web ]; then set -a; . ./.env.web; set +a; fi
