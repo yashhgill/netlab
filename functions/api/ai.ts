@@ -3,11 +3,14 @@
  *
  * 1. Checks the caller's Supabase session and that they have Pro access.
  * 2. Counts usage per day.
- * 3. Asks Groq (Qwen) for help, giving it exact subnet calculators as tools,
+ * 3. Asks a free AI provider (Groq, then Gemini, Cerebras or OpenRouter when one is busy)
+ *    for help, giving it exact subnet calculators as tools,
  *    and returns a reply plus a list of actions the app can preview and apply.
  *
  * Settings (wrangler.toml [vars] or Cloudflare Pages > Settings > Variables):
- *   GROQ_API_KEY (secret), SUPABASE_URL, SUPABASE_ANON_KEY, GROQ_MODEL (optional), AI_DAILY_LIMIT (optional)
+ *   Secrets (any one or more): GROQ_API_KEY, GEMINI_API_KEY, CEREBRAS_API_KEY, OPENROUTER_API_KEY
+ *   Optional model overrides: GROQ_MODEL, GEMINI_MODEL, CEREBRAS_MODEL, OPENROUTER_MODEL
+ *   SUPABASE_URL, SUPABASE_ANON_KEY, AI_DAILY_LIMIT (optional)
  *
  * Supabase is called with the user's own sign-in token, so row level security
  * applies and no service key is needed.
@@ -15,8 +18,14 @@
 import { subnetInfo, vlsm } from '../../app/src/engine/vlsm';
 
 interface Env {
-  GROQ_API_KEY: string;
+  GROQ_API_KEY?: string;
   GROQ_MODEL?: string;
+  GEMINI_API_KEY?: string;
+  GEMINI_MODEL?: string;
+  CEREBRAS_API_KEY?: string;
+  CEREBRAS_MODEL?: string;
+  OPENROUTER_API_KEY?: string;
+  OPENROUTER_MODEL?: string;
   SUPABASE_URL: string;
   SUPABASE_ANON_KEY: string;
   AI_DAILY_LIMIT?: string;
@@ -141,58 +150,140 @@ function extractJson(text: string): Record<string, unknown> | null {
 
 type Msg = { role: string; content?: string | null; tool_calls?: { id: string; function: { name: string; arguments: string } }[]; tool_call_id?: string; name?: string };
 
-class RateLimited extends Error {}
-
-/** Call Groq; when the per-minute token limit is hit, wait it out (briefly) and try again. */
-async function groq(env: Env, messages: Msg[], extra: Record<string, unknown>, budget = { waited: 0 }) {
-  for (;;) {
-    try {
-      return await groqOnce(env, messages, extra);
-    } catch (e) {
-      if (!(e instanceof RateLimited)) throw e;
-      const m = e.message.match(/try again in (?:(\d+)m)?([\d.]+)s/i);
-      const wait = m ? (Number(m[1] ?? 0) * 60 + Number(m[2])) * 1000 + 300 : 8000;
-      if (budget.waited + wait > MAX_RATE_WAIT_MS) {
-        const n = e.message.match(/Limit (\d+), Used (\d+), Requested (\d+)/);
-        const big = n && Number(n[3]) > Number(n[1]);
-        throw new Error(
-          big
-            ? `The AI is busy right now: this request needs ${n![3]} tokens but the AI plan allows ${n![1]} per minute. Try a shorter question.`
-            : `The AI is busy right now. Please try again in a minute.${n ? ` (${n[2]} of ${n[1]} tokens used this minute)` : ''}`,
-        );
-      }
-      budget.waited += wait;
-      await new Promise((r) => setTimeout(r, wait));
-    }
+class RateLimited extends Error {
+  provider: string;
+  constructor(message: string, provider: string) {
+    super(message);
+    this.provider = provider;
   }
 }
 
-async function groqOnce(env: Env, messages: Msg[], extra: Record<string, unknown>) {
-  const r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-    method: 'POST',
-    headers: { authorization: `Bearer ${env.GROQ_API_KEY}`, 'content-type': 'application/json' },
-    body: JSON.stringify({
+/** One OpenAI-compatible chat provider. Free plans are tried in order; a busy one hands over to the next. */
+interface Provider {
+  name: string;
+  url: string;
+  key: string;
+  model: string;
+  headers?: Record<string, string>;
+  /** Extra request fields this provider understands. */
+  tune?: (body: Record<string, unknown>) => Record<string, unknown>;
+}
+
+export function providers(env: Env): Provider[] {
+  const list: Provider[] = [];
+  if (env.GROQ_API_KEY)
+    list.push({
+      name: 'Groq',
+      url: 'https://api.groq.com/openai/v1/chat/completions',
+      key: env.GROQ_API_KEY,
       model: env.GROQ_MODEL || DEFAULT_MODEL,
-      messages,
-      temperature: 0.2,
-      max_completion_tokens: 2048,
-      ...(env.__noReasoningParam ? {} : { reasoning_effort: 'none' }),
-      ...extra,
-    }),
-  });
-  const body = (await r.json().catch(() => ({}))) as { choices?: { message: Msg }[]; error?: { message?: string } };
-  if (r.status === 429) throw new RateLimited(body.error?.message || 'rate limited');
-  // models without a thinking switch reject reasoning_effort: remember and retry without it
-  if (r.status === 400 && /reasoning/i.test(body.error?.message ?? '') && !env.__noReasoningParam) {
-    env.__noReasoningParam = true;
-    return groqOnce(env, messages, extra);
+      tune: (b) => ({ ...b, max_completion_tokens: 2048, ...(env.__noReasoningParam ? {} : { reasoning_effort: 'none' }) }),
+    });
+  if (env.GEMINI_API_KEY)
+    list.push({
+      name: 'Gemini',
+      url: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
+      key: env.GEMINI_API_KEY,
+      model: env.GEMINI_MODEL || 'gemini-3.8-flash',
+      tune: (b) => ({ ...b, max_tokens: 2048, reasoning_effort: 'low' }),
+    });
+  if (env.CEREBRAS_API_KEY)
+    list.push({
+      name: 'Cerebras',
+      url: 'https://api.cerebras.ai/v1/chat/completions',
+      key: env.CEREBRAS_API_KEY,
+      model: env.CEREBRAS_MODEL || 'gpt-oss-120b',
+      tune: (b) => ({ ...b, max_completion_tokens: 2048 }),
+    });
+  if (env.OPENROUTER_API_KEY)
+    list.push({
+      name: 'OpenRouter',
+      url: 'https://openrouter.ai/api/v1/chat/completions',
+      key: env.OPENROUTER_API_KEY,
+      model: env.OPENROUTER_MODEL || 'openrouter/free',
+      headers: { 'HTTP-Referer': 'https://netlab.harnova.my', 'X-Title': 'HarNova NetLab' },
+      tune: (b) => ({ ...b, max_tokens: 2048 }),
+    });
+  return list;
+}
+
+const waitFor = (msg: string) => {
+  const m = msg.match(/try again in (?:(\d+)m)?([\d.]+)s/i) ?? msg.match(/retry (?:in|after) ([\d.]+)\s*s/i);
+  if (!m) return 8000;
+  return m.length === 3 ? (Number(m[1] ?? 0) * 60 + Number(m[2])) * 1000 + 300 : Number(m[1]) * 1000 + 300;
+};
+
+interface Budget {
+  waited: number;
+  /** Provider that last answered in this request; later rounds start with it. */
+  prefer?: string;
+  used?: string;
+}
+
+/**
+ * Ask the providers in turn. A busy (rate-limited) or failing provider hands over
+ * to the next one; only when every provider is busy do we wait briefly and retry.
+ */
+async function chat(env: Env, messages: Msg[], extra: Record<string, unknown>, budget: Budget = { waited: 0 }) {
+  const all = providers(env);
+  if (!all.length) throw new Error('No AI provider is set up.');
+  for (;;) {
+    const order = budget.prefer ? [...all.filter((p) => p.name === budget.prefer), ...all.filter((p) => p.name !== budget.prefer)] : all;
+    let soonest = Infinity;
+    let lastLimit: RateLimited | null = null;
+    let lastError: Error | null = null;
+    for (const p of order) {
+      try {
+        const msg = await callOnce(env, p, messages, extra);
+        budget.prefer = p.name;
+        budget.used = p.name;
+        return msg;
+      } catch (e) {
+        if (e instanceof RateLimited) {
+          lastLimit = e;
+          soonest = Math.min(soonest, waitFor(e.message));
+        } else lastError = e as Error;
+      }
+    }
+    if (!lastLimit) throw lastError ?? new Error('The AI service did not answer.');
+    if (budget.waited + soonest > MAX_RATE_WAIT_MS) {
+      const n = lastLimit.message.match(/Limit (\d+), Used (\d+), Requested (\d+)/);
+      const big = all.length === 1 && n && Number(n[3]) > Number(n[1]);
+      throw new Error(
+        big
+          ? `The AI is busy right now: this request needs ${n![3]} tokens but the AI plan allows ${n![1]} per minute. Try a shorter question.`
+          : `The AI is busy right now. Please try again in a minute.${all.length === 1 && n ? ` (${n[2]} of ${n[1]} tokens used this minute)` : ''}`,
+      );
+    }
+    budget.waited += soonest;
+    await new Promise((r) => setTimeout(r, soonest));
   }
-  if (!r.ok) throw new Error(body.error?.message || `Groq returned ${r.status}`);
-  return body.choices?.[0]?.message;
+}
+
+async function callOnce(env: Env, p: Provider, messages: Msg[], extra: Record<string, unknown>): Promise<Msg | undefined> {
+  const base = { model: p.model, messages, temperature: 0.2, ...extra };
+  const r = await fetch(p.url, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${p.key}`, 'content-type': 'application/json', ...(p.headers ?? {}) },
+    body: JSON.stringify(p.tune ? p.tune(base) : base),
+  });
+  const raw = await r.json().catch(() => ({}));
+  const body = (Array.isArray(raw) ? raw[0] : raw) as { choices?: { message: Msg }[]; error?: { message?: string } };
+  const message = body.error?.message || `${p.name} returned ${r.status}`;
+  if (r.status === 429 || r.status === 503 || /rate limit|quota|resource.?exhausted|overloaded/i.test(r.ok ? '' : message)) throw new RateLimited(message, p.name);
+  // a model without a thinking switch rejects reasoning_effort: remember and retry without it
+  if (r.status === 400 && p.name === 'Groq' && /reasoning/i.test(message) && !env.__noReasoningParam) {
+    env.__noReasoningParam = true;
+    return callOnce(env, providers(env).find((x) => x.name === 'Groq')!, messages, extra);
+  }
+  if (!r.ok) throw new Error(`${p.name}: ${message}`);
+  const msg = body.choices?.[0]?.message;
+  if (!msg) throw new Error(`${p.name} returned no answer.`);
+  return msg;
 }
 
 export async function onRequestPost({ request, env }: Ctx): Promise<Response> {
-  if (!env.GROQ_API_KEY || !env.SUPABASE_URL) return json({ error: 'The AI assistant is not set up on this server yet.' }, 503);
+  if (!providers(env).length || !env.SUPABASE_URL) return json({ error: 'The AI assistant is not set up on this server yet.' }, 503);
 
   const token = (request.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
   if (!token) return json({ error: 'Sign in to use the AI assistant.', code: 'auth' }, 401);
@@ -233,9 +324,9 @@ export async function onRequestPost({ request, env }: Ctx): Promise<Response> {
 
   try {
     let final: Msg | undefined;
-    const budget = { waited: 0 };
+    const budget: Budget = { waited: 0 };
     for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
-      const msg = await groq(env, messages, round < MAX_TOOL_ROUNDS ? { tools: TOOLS, tool_choice: 'auto' } : {}, budget);
+      const msg = await chat(env, messages, round < MAX_TOOL_ROUNDS ? { tools: TOOLS, tool_choice: 'auto' } : {}, budget);
       if (!msg) throw new Error('The model returned no answer.');
       if (msg.tool_calls?.length) {
         messages.push({ role: 'assistant', content: msg.content ?? '', tool_calls: msg.tool_calls });
@@ -250,7 +341,7 @@ export async function onRequestPost({ request, env }: Ctx): Promise<Response> {
       // Ask once more, in JSON mode, to restate the answer in the required shape.
       messages.push({ role: 'assistant', content: final?.content ?? '' });
       messages.push({ role: 'user', content: 'Restate your final answer as the required JSON object only.' });
-      const fix = await groq(env, messages, { response_format: { type: 'json_object' } }, budget);
+      const fix = await chat(env, messages, { response_format: { type: 'json_object' } }, budget);
       out = fix?.content ? extractJson(fix.content) : null;
     }
     if (!out) return json({ error: 'The AI answer could not be read. Try asking again in a different way.' }, 424);
@@ -259,6 +350,7 @@ export async function onRequestPost({ request, env }: Ctx): Promise<Response> {
       subnets: Array.isArray(out.subnets) ? out.subnets.slice(0, 64) : [],
       actions: Array.isArray(out.actions) ? out.actions.slice(0, 200) : [],
       usage: { used, limit },
+      provider: budget.used,
     });
   } catch (e) {
     const msg = (e as Error).message;
@@ -267,5 +359,6 @@ export async function onRequestPost({ request, env }: Ctx): Promise<Response> {
 }
 
 export async function onRequestGet({ env }: Ctx): Promise<Response> {
-  return json({ ok: true, configured: !!(env.GROQ_API_KEY && env.SUPABASE_URL), model: env.GROQ_MODEL || DEFAULT_MODEL });
+  const list = providers(env);
+  return json({ ok: true, configured: !!(list.length && env.SUPABASE_URL), providers: list.map((p) => `${p.name} (${p.model})`), model: list[0]?.model ?? null });
 }

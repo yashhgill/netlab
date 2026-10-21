@@ -18,6 +18,9 @@ import {
 } from './actions';
 import { CABLE_STYLE, DeviceArt } from './icons';
 import { engine, getState, markDirty, openWindow, setState, toast, useUi } from './store';
+import { addShape, connectorEnds, deleteShape, hitTarget, updateShape } from '../diagram/actions';
+import { FormatBar, ShapeLayer, ShapeSvg, ShapeTextEditor, type ShapeHandlers } from '../diagram/DiagramLayer';
+import { isConnector, newShape, type Shape } from '../diagram/shapes';
 
 const ICON = 66;
 
@@ -53,6 +56,11 @@ export function Canvas() {
   const anim = useUi((s) => s.anim);
   const placing = useUi((s) => s.placing);
   const picker = useUi((s) => s.portPicker);
+  const shapes = useUi((s) => s.shapes);
+  const editingShape = useUi((s) => s.editingShape);
+  const drawKind = useUi((s) => s.drawKind);
+  const drawIcon = useUi((s) => s.drawIcon);
+  const [drawing, setDrawing] = useState<{ x1: number; y1: number; x2: number; y2: number; from?: string } | null>(null);
 
   const svgRef = useRef<SVGSVGElement>(null);
   const [view, setView] = useState<View>({ x: 0, y: 0, k: 1 });
@@ -65,6 +73,10 @@ export function Canvas() {
     | { kind: 'device'; id: string; dx: number; dy: number; moved: boolean; sx: number; sy: number }
     | { kind: 'pan'; sx: number; sy: number; vx: number; vy: number }
     | { kind: 'note'; id: string; dx: number; dy: number }
+    | { kind: 'shape'; id: string; sx: number; sy: number; orig: Shape; moved: boolean }
+    | { kind: 'resize'; id: string; corner: 'nw' | 'ne' | 'sw' | 'se'; orig: Shape }
+    | { kind: 'end'; id: string; which: 'from' | 'to' }
+    | { kind: 'draw'; x1: number; y1: number; from?: string }
     | null
   >(null);
   const [editingNote, setEditingNote] = useState<string | null>(null);
@@ -196,6 +208,14 @@ export function Canvas() {
       deleteDevice(d.id);
       return;
     }
+    if (s.tool === 'shape') {
+      // lines and arrows start on the device; other shapes draw from here
+      const w0 = toWorld(e.clientX, e.clientY);
+      const conn = s.drawKind === 'line' || s.drawKind === 'arrow';
+      startDraw(conn ? d.x : w0.x, conn ? d.y : w0.y, conn ? d.id : undefined);
+      (e.target as Element).setPointerCapture?.(e.pointerId);
+      return;
+    }
     if (s.tool === 'cable') {
       handleCableClick(d, e.clientX, e.clientY);
       return;
@@ -261,10 +281,49 @@ export function Canvas() {
     setState({ cableFrom: null });
   };
 
+  // ---------- diagram shapes ----------
+  const startDraw = (x: number, y: number, from?: string) => {
+    drag.current = { kind: 'draw', x1: x, y1: y, from };
+    setDrawing({ x1: x, y1: y, x2: x, y2: y, from });
+  };
+
+  const shapeHandlers: ShapeHandlers = {
+    onDown: (e, sh) => {
+      const s = getState();
+      if (s.tool === 'shape' || s.tool === 'cable' || s.tool === 'pdu' || s.tool === 'inspect' || s.placing) return; // let the background handle it
+      e.stopPropagation();
+      if (s.tool === 'delete') return deleteShape(sh.id);
+      if (s.tool === 'note') return;
+      setState({ selected: { kind: 'shape', id: sh.id }, portPicker: null, menu: null, shapeMenu: false });
+      const w = toWorld(e.clientX, e.clientY);
+      let orig = sh;
+      if (isConnector(sh) && (sh.from || sh.to)) {
+        // moving a whole connector unhooks it from what it was attached to
+        const en = connectorEnds(sh);
+        orig = { ...sh, from: undefined, to: undefined, x: en.x1, y: en.y1, x2: en.x2, y2: en.y2 };
+      }
+      drag.current = { kind: 'shape', id: sh.id, sx: w.x, sy: w.y, orig, moved: false };
+      (e.target as Element).setPointerCapture?.(e.pointerId);
+    },
+    onHandle: (e, sh, which) => {
+      e.stopPropagation();
+      if (which === 'from' || which === 'to') drag.current = { kind: 'end', id: sh.id, which };
+      else drag.current = { kind: 'resize', id: sh.id, corner: which, orig: sh };
+      (e.target as Element).setPointerCapture?.(e.pointerId);
+    },
+    onDouble: (sh) => setState({ editingShape: sh.id, selected: { kind: 'shape', id: sh.id } }),
+  };
+
   // ---------- background ----------
   const onBgDown = (e: RPE) => {
     const s = getState();
-    setState({ portPicker: null, menu: null });
+    setState({ portPicker: null, menu: null, shapeMenu: false });
+    if (s.tool === 'shape' && !s.placing) {
+      const w0 = toWorld(e.clientX, e.clientY);
+      startDraw(w0.x, w0.y, s.drawKind === 'line' || s.drawKind === 'arrow' ? hitTarget(w0.x, w0.y) : undefined);
+      (e.target as Element).setPointerCapture?.(e.pointerId);
+      return;
+    }
     const w = toWorld(e.clientX, e.clientY);
     setState({ inspectMenu: null });
     if (s.placing) {
@@ -304,12 +363,59 @@ export function Canvas() {
       }
     } else if (dr.kind === 'note') {
       updateNote(dr.id, { x: w.x - dr.dx, y: w.y - dr.dy });
+    } else if (dr.kind === 'draw') {
+      setDrawing({ x1: dr.x1, y1: dr.y1, x2: w.x, y2: w.y, from: dr.from });
+    } else if (dr.kind === 'shape') {
+      const dx = w.x - dr.sx;
+      const dy = w.y - dr.sy;
+      if (!dr.moved && Math.hypot(dx, dy) < 3 / viewRef.current.k) return;
+      dr.moved = true;
+      const o = dr.orig;
+      updateShape(dr.id, isConnector(o) ? { from: undefined, to: undefined, x: o.x + dx, y: o.y + dy, x2: (o.x2 ?? o.x) + dx, y2: (o.y2 ?? o.y) + dy } : { x: Math.round(o.x + dx), y: Math.round(o.y + dy) });
+    } else if (dr.kind === 'resize') {
+      const o = dr.orig;
+      let x1 = o.x;
+      let y1 = o.y;
+      let x2 = o.x + o.w;
+      let y2 = o.y + o.h;
+      if (dr.corner.includes('w')) x1 = Math.min(w.x, x2 - 16);
+      else x2 = Math.max(w.x, x1 + 16);
+      if (dr.corner.includes('n')) y1 = Math.min(w.y, y2 - 16);
+      else y2 = Math.max(w.y, y1 + 16);
+      updateShape(dr.id, { x: Math.round(x1), y: Math.round(y1), w: Math.round(x2 - x1), h: Math.round(y2 - y1) });
+    } else if (dr.kind === 'end') {
+      const sh = getState().shapes.find((x) => x.id === dr.id);
+      if (!sh) return;
+      const cur = connectorEnds(sh);
+      const other = dr.which === 'from' ? sh.to : sh.from;
+      const target = hitTarget(w.x, w.y, sh.id);
+      const attach = target && target !== other ? target : undefined;
+      if (dr.which === 'from') updateShape(dr.id, { from: attach, x: w.x, y: w.y, ...(sh.to ? {} : { x2: cur.x2, y2: cur.y2 }) });
+      else updateShape(dr.id, { to: attach, x2: w.x, y2: w.y, ...(sh.from ? {} : { x: cur.x1, y: cur.y1 }) });
     }
   };
 
   const onUp = () => {
     const dr = drag.current;
     drag.current = null;
+    if (dr?.kind === 'draw') {
+      const st = getState();
+      const d = drawing ?? { x1: dr.x1, y1: dr.y1, x2: dr.x1, y2: dr.y1 };
+      setDrawing(null);
+      const conn = st.drawKind === 'line' || st.drawKind === 'arrow';
+      if (conn) {
+        const to = hitTarget(d.x2, d.y2, undefined);
+        const short = Math.hypot(d.x2 - d.x1, d.y2 - d.y1) < 10;
+        if (short && !to) return; // a tap draws nothing; drag to draw a line
+        addShape({ ...newShape(st.drawKind, d.x1, d.y1, short ? d.x1 + 120 : d.x2, short ? d.y1 : d.y2), from: dr.from, to: to && to !== dr.from ? to : undefined });
+      } else {
+        const sh = newShape(st.drawKind, d.x1, d.y1, d.x2, d.y2, st.drawIcon ?? undefined);
+        addShape(sh);
+        if (sh.kind === 'text') setState({ editingShape: sh.id });
+      }
+      setState({ tool: 'select' });
+      return;
+    }
     if (dr?.kind === 'device') {
       if (!dr.moved) openWindow(dr.id);
       else markDirty();
@@ -343,7 +449,7 @@ export function Canvas() {
   void frame;
   const animT = anim ? Math.min(1, (now - anim.start) / anim.dur) : 0;
   const cursor =
-    placing ? 'copy' : tool === 'delete' ? 'not-allowed' : tool === 'cable' ? 'crosshair' : tool === 'pdu' ? 'cell' : tool === 'note' ? 'text' : drag.current?.kind === 'pan' ? 'grabbing' : 'default';
+    placing ? 'copy' : tool === 'shape' ? 'crosshair' : tool === 'delete' ? 'not-allowed' : tool === 'cable' ? 'crosshair' : tool === 'pdu' ? 'cell' : tool === 'note' ? 'text' : drag.current?.kind === 'pan' ? 'grabbing' : 'default';
 
   const hoverDev = hover ? engine.devices.get(hover.id) : null;
 
@@ -366,7 +472,8 @@ export function Canvas() {
           </pattern>
         </defs>
         <rect width="100%" height="100%" fill="url(#dots)" />
-        <g transform={`translate(${view.x} ${view.y}) scale(${view.k})`}>
+        <g className="canvas-world" transform={`translate(${view.x} ${view.y}) scale(${view.k})`}>
+          <ShapeLayer shapes={shapes.filter((x) => x.kind === 'zone')} k={view.k} selectedId={selected?.kind === 'shape' ? selected.id : null} h={shapeHandlers} />
           {links.map((l) => {
             const a = pos(l.a.dev);
             const b = pos(l.b.dev);
@@ -428,6 +535,21 @@ export function Canvas() {
               </g>
             );
           })}
+
+          <ShapeLayer shapes={shapes.filter((x) => x.kind !== 'zone')} k={view.k} selectedId={selected?.kind === 'shape' ? selected.id : null} h={shapeHandlers} />
+
+          {drawing &&
+            (() => {
+              const conn = drawKind === 'line' || drawKind === 'arrow';
+              const tiny = Math.hypot(drawing.x2 - drawing.x1, drawing.y2 - drawing.y1) < 6;
+              if (tiny && conn) return null;
+              const preview = newShape(drawKind, drawing.x1, drawing.y1, drawing.x2, drawing.y2, drawIcon ?? undefined);
+              return (
+                <g opacity={0.6} pointerEvents="none">
+                  <ShapeSvg s={preview} />
+                </g>
+              );
+            })()}
 
           {cableFrom && mouse && (
             <path d={cablePath(pos(cableFrom.dev), mouse, cable)} fill="none" className="rubber" style={cable === 'auto' ? undefined : { stroke: CABLE_STYLE[cable].stroke }} strokeDasharray={CABLE_STYLE[cable].dash} />
@@ -546,12 +668,15 @@ export function Canvas() {
         </g>
       </svg>
 
-      {!devices.length && !placing && (
+      {!devices.length && !shapes.length && !placing && tool !== 'shape' && (
         <div className="empty-hint">
           <p className="empty-title">Start a topology</p>
           <p>Drag a router, switch or PC from the device bar below, or open a NetLab or Packet Tracer file from the File menu.</p>
         </div>
       )}
+
+      {editingShape && shapes.find((x) => x.id === editingShape) && <ShapeTextEditor key={editingShape} s={shapes.find((x) => x.id === editingShape)!} view={view} />}
+      <FormatBar />
 
       {picker && <PortPicker dev={engine.devices.get(picker.dev)!} x={picker.x} y={picker.y} onPick={pickPort} onClose={() => setState({ portPicker: null })} />}
 

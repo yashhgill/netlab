@@ -2,6 +2,7 @@ import { Engine, uid, type CableType, type Device, type DeviceKind } from './eng
 import { Host, type HostKind } from './devices/host';
 import { AccessPoint, Hub } from './devices/hub';
 import { Router } from './devices/router';
+import type { Shape } from '../diagram/shapes';
 import { Switch } from './devices/switch';
 
 export const FILE_FORMAT = 'harnova-netlab';
@@ -57,9 +58,11 @@ export interface SavedFile {
   devices: Record<string, unknown>[];
   links: { id: string; a: { dev: string; iface: string }; b: { dev: string; iface: string }; cable: CableType; dce?: 'a' | 'b' }[];
   notes?: Note[];
+  /** Diagram shapes, zones, text and connectors drawn on the workspace. */
+  shapes?: Shape[];
 }
 
-export function serialize(engine: Engine, notes: Note[] = []): SavedFile {
+export function serialize(engine: Engine, notes: Note[] = [], shapes: Shape[] = []): SavedFile {
   return {
     format: FILE_FORMAT,
     version: FILE_VERSION,
@@ -67,6 +70,7 @@ export function serialize(engine: Engine, notes: Note[] = []): SavedFile {
     // wireless associations are rebuilt from SSID settings when a file is opened
     links: [...engine.links.values()].filter((l) => l.cable !== 'wireless').map((l) => ({ id: l.id, a: l.a, b: l.b, cable: l.cable, dce: l.dce })),
     notes,
+    shapes,
   };
 }
 

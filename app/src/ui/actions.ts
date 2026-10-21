@@ -1,3 +1,4 @@
+import { deleteShape, detachFrom } from '../diagram/actions';
 import { fmtIp } from '../engine/addr';
 import { cableFor, deviceGroup, mediaOf, type CableType, type Device, type DeviceKind, type Iface, type Media } from '../engine/engine';
 import { Router } from '../engine/devices/router';
@@ -18,6 +19,7 @@ export function deleteDevice(id: string) {
   if (!d) return;
   closeWindow(id);
   dropShell(d);
+  detachFrom(id);
   engine.removeDevice(id);
   setState((s) => ({
     selected: s.selected?.id === id ? null : s.selected,
@@ -227,7 +229,7 @@ export function simReset() {
 export const AUTOSAVE_KEY = 'netlab.autosave.v1';
 
 export function currentFile(): SavedFile {
-  return serialize(engine, getState().notes);
+  return serialize(engine, getState().notes, getState().shapes);
 }
 
 export function newTopology() {
@@ -237,14 +239,14 @@ export function newTopology() {
   engine.links.clear();
   engine.resetTraffic();
   engine.now = 0;
-  setState({ notes: [], scenarios: [], selected: null, fileName: 'Untitled', dirty: false, anim: null, playing: false, cableFrom: null, pduSrc: null });
+  setState({ notes: [], shapes: [], scenarios: [], selected: null, editingShape: null, fileName: 'Untitled', dirty: false, anim: null, playing: false, cableFrom: null, pduSrc: null });
 }
 
 export function openTopology(file: SavedFile, name: string) {
   newTopology();
   try {
     const notes = load(engine, file);
-    setState({ notes, fileName: name.replace(/\.nlab$/i, ''), dirty: false });
+    setState({ notes, shapes: file.shapes ?? [], fileName: name.replace(/\.nlab$/i, ''), dirty: false });
   } catch (e) {
     toast((e as Error).message, 'error');
   }
@@ -293,5 +295,6 @@ export function deleteSelected() {
   if (!sel) return;
   if (sel.kind === 'device') deleteDevice(sel.id);
   else if (sel.kind === 'link') deleteLink(sel.id);
+  else if (sel.kind === 'shape') deleteShape(sel.id);
   else deleteNote(sel.id);
 }

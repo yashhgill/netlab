@@ -11,6 +11,7 @@ import { engine, getState, setState, useUi } from './ui/store';
 import { isDesktop } from './platform';
 import { AiPanel } from './ui/AiPanel';
 import { AccountDialogs } from './account/AccountUi';
+import { ShapePicker } from './diagram/DiagramLayer';
 
 function useEngineLoop() {
   useEffect(() => {
@@ -96,6 +97,7 @@ export default function App() {
         <div className="stage">
           <Canvas />
           <ToolPalette />
+          <ShapePicker />
           <InspectMenu />
           <InspectWindows />
           <DeviceWindows />

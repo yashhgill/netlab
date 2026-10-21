@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { isDesktop, openFile, saveText } from '../platform';
+import { isDesktop, openFile, saveBlob, saveText } from '../platform';
 import { unzipSync } from 'fflate';
 import { runningConfig } from '../cli/ios-show';
 import { Router } from '../engine/devices/router';
@@ -18,8 +18,22 @@ export async function doSave() {
   }
 }
 
-/** Open file bytes: a NetLab topology, or a Packet Tracer file. */
+/** Open file bytes: a NetLab topology, a Packet Tracer file, or a draw.io diagram. */
 export async function openBytes(name: string, bytes: Uint8Array) {
+  const text = () => new TextDecoder().decode(bytes);
+  if (/\.(drawio|xml)$/i.test(name) || (/^\s*<mxfile/.test(text().slice(0, 200)))) {
+    try {
+      const { fromDrawio } = await import('../diagram/drawio');
+      const r = fromDrawio(text());
+      openTopology(r.file, name.replace(/\.(drawio|xml)$/i, ''));
+      setState({ dirty: true });
+      toast(`Opened ${name}: ${r.devices} live device${r.devices === 1 ? '' : 's'}, ${r.cables} cable${r.cables === 1 ? '' : 's'}, ${r.shapes} diagram object${r.shapes === 1 ? '' : 's'}.`);
+      setTimeout(() => canvasApi.fit(), 50);
+    } catch (e) {
+      toast(`${name} could not be opened: ${(e as Error).message}`, 'error');
+    }
+    return;
+  }
   if (/\.(pkt|pka|pkz)$/i.test(name)) {
     try {
       let data = bytes;
@@ -58,6 +72,24 @@ export async function doOpen() {
   await openBytes(f.name, f.bytes);
 }
 
+export async function doExportPicture(kind: 'png' | 'svg' | 'pdf') {
+  try {
+    const { exportPicture } = await import('../diagram/export');
+    const name = await exportPicture(kind);
+    if (name) toast(`Saved ${name}`);
+  } catch (e) {
+    toast((e as Error).message, 'error');
+  }
+}
+
+export async function doExportDrawio() {
+  const { toDrawio } = await import('../diagram/drawio');
+  const st = getState();
+  const xml = toDrawio(engine, st.shapes, st.notes, st.fileName);
+  const name = await saveBlob(`${st.fileName}.drawio`, new Blob([xml], { type: 'application/xml' }), 'draw.io diagram');
+  if (name) toast(`Saved ${name}. Open it in draw.io (diagrams.net) or back in NetLab.`);
+}
+
 /** Every router and switch configuration in one text file, ready to paste into a real or simulated device. */
 export async function doExportConfigs() {
   const parts: string[] = [];
@@ -81,19 +113,28 @@ export const TOOLS: { id: Tool; label: string; key: string; icon: () => React.Re
   { id: 'select', label: 'Select and move', key: 'V', icon: UiIcon.select },
   { id: 'inspect', label: 'Inspect tables', key: 'I', icon: UiIcon.inspect },
   { id: 'delete', label: 'Delete', key: 'D', icon: UiIcon.trash },
+  { id: 'shape', label: 'Draw shapes, zones, text and arrows', key: 'S', icon: UiIcon.shapes },
   { id: 'note', label: 'Place note', key: 'N', icon: UiIcon.note },
   { id: 'pdu', label: 'Add simple PDU (ping)', key: 'P', icon: UiIcon.pdu },
 ];
 
-export const setTool = (t: Tool) => setState({ tool: t, cableFrom: null, pduSrc: null, placing: null, placingModel: null, portPicker: null, inspectMenu: null });
+export const setTool = (t: Tool) => {
+  if (t === 'shape') {
+    // the shapes button opens the picker; the tool switches on once a shape is chosen
+    setState((s) => ({ shapeMenu: !s.shapeMenu, cableFrom: null, pduSrc: null, placing: null, placingModel: null, portPicker: null, inspectMenu: null }));
+    return;
+  }
+  setState({ tool: t, shapeMenu: false, cableFrom: null, pduSrc: null, placing: null, placingModel: null, portPicker: null, inspectMenu: null });
+};
 
 /** Vertical tool palette on the right edge of the workspace. */
 export function ToolPalette() {
   const tool = useUi((s) => s.tool);
+  const shapeMenu = useUi((s) => s.shapeMenu);
   return (
     <div className="palette" role="toolbar" aria-label="Tools" aria-orientation="vertical">
       {TOOLS.map((t) => (
-        <button key={t.id} className={`tool${tool === t.id ? ' on' : ''}`} onClick={() => setTool(t.id)} title={`${t.label} (${t.key})`} aria-pressed={tool === t.id}>
+        <button key={t.id} className={`tool${tool === t.id || (t.id === 'shape' && shapeMenu) ? ' on' : ''}`} onClick={() => setTool(t.id)} title={`${t.label} (${t.key})`} aria-pressed={tool === t.id}>
           <t.icon />
         </button>
       ))}
@@ -125,7 +166,10 @@ export function TopBar() {
         return;
       }
       if (typing || mod) return;
-      if (e.key === 'Escape') setTool('select');
+      if (e.key === 'Escape') {
+        setState({ editingShape: null });
+        setTool('select');
+      }
       else if (e.key === 'Delete' || e.key === 'Backspace') deleteSelected();
       else {
         const t = TOOLS.find((x) => x.key.toLowerCase() === e.key.toLowerCase());
@@ -175,7 +219,13 @@ export function TopBar() {
                     {item('New topology', doNew)}
                     {item('Open…', doOpen, `${modKey}O`)}
                     {item('Save', doSave, `${modKey}S`)}
-                    {item('Export device configs (.txt)', doExportConfigs)}
+                    <div className="menu-sep" />
+                    <div className="menu-label">Export</div>
+                    {item('Picture (PNG)', () => doExportPicture('png'))}
+                    {item('Picture (SVG)', () => doExportPicture('svg'))}
+                    {item('PDF for reports', () => doExportPicture('pdf'))}
+                    {item('draw.io diagram (.drawio)', doExportDrawio)}
+                    {item('Device configs (.txt)', doExportConfigs)}
                   </>
                 )}
                 {m === 'Edit' && (

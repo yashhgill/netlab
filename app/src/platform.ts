@@ -41,12 +41,12 @@ export async function saveText(suggested: string, text: string): Promise<string 
   return suggested;
 }
 
-/** Pick a topology file: NetLab .nlab, or Packet Tracer .pkt / .pka / .pkz. */
+/** Pick a topology file: NetLab .nlab, Packet Tracer .pkt / .pka / .pkz, or a draw.io diagram. */
 export function openFile(): Promise<{ name: string; bytes: Uint8Array } | null> {
   return new Promise((resolve) => {
     const input = document.createElement('input');
     input.type = 'file';
-    input.accept = '.nlab,.pkt,.pka,.pkz,application/json';
+    input.accept = '.nlab,.pkt,.pka,.pkz,.drawio,.xml,application/json';
     input.onchange = async () => {
       const f = input.files?.[0];
       if (!f) return resolve(null);
@@ -54,4 +54,37 @@ export function openFile(): Promise<{ name: string; bytes: Uint8Array } | null> 
     };
     input.click();
   });
+}
+
+/** Save binary or text data (images, PDFs, diagrams) with a file picker where available. */
+export async function saveBlob(suggested: string, blob: Blob, description: string): Promise<string | null> {
+  const ext = suggested.split('.').pop()!.toLowerCase();
+  if (isDesktop) {
+    const { save } = await import('@tauri-apps/plugin-dialog');
+    const { writeFile } = await import('@tauri-apps/plugin-fs');
+    const path = await save({ defaultPath: suggested, filters: [{ name: description, extensions: [ext] }] });
+    if (!path) return null;
+    await writeFile(path, new Uint8Array(await blob.arrayBuffer()));
+    return path.split(/[\\/]/).pop() ?? suggested;
+  }
+  const w = window as unknown as { showSaveFilePicker?: (o: unknown) => Promise<any> };
+  if (w.showSaveFilePicker) {
+    try {
+      const h = await w.showSaveFilePicker({ suggestedName: suggested, types: [{ description, accept: { [blob.type || 'application/octet-stream']: [`.${ext}`] } }] });
+      const s = await h.createWritable();
+      await s.write(blob);
+      await s.close();
+      return h.name;
+    } catch (e) {
+      if ((e as Error).name === 'AbortError') return null;
+    }
+  }
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = suggested;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  return suggested;
 }

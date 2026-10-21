@@ -26,6 +26,12 @@ An open-source network simulator for the browser and the desktop. Build a topolo
 
 Not yet: dynamic routing protocols (RIP, OSPF), STP, ACLs, NAT and wireless. Contributions are welcome.
 
+## Diagrams on the same workspace
+
+The shapes button on the tool palette (or **S**) adds draw.io-style objects next to the live network: rectangles, rounded boxes, ellipses, diamonds, zones (shaded areas for rooms, buildings, VLANs or subnets), text, lines and arrows, plus drawing-only icons (firewall, cloud, internet, server rack, users, building, database, security, ISP tower). Lines and arrows snap to devices and shapes and follow them when they move. Select a shape to change its fill, border, dash, text size and order.
+
+File > Export saves the workspace as PNG, SVG, PDF or a `.drawio` file. File > Open reads `.drawio` files too: shapes, text and arrows come across, and network shapes from draw.io's Cisco and network libraries become live devices, with edges between them turned into real cables.
+
 ## Opening Packet Tracer files
 
 File > Open (or drag a file onto the window) accepts Packet Tracer `.pkt`, `.pka` and `.pkz` files from version 5 onward. NetLab decrypts the file (the format was documented by the open-source [pka2xml](https://github.com/mircodz/pka2xml) project; `app/src/pt/pkt-crypto.ts` is an independent implementation), reads the network XML and rebuilds it with the closest NetLab models:
@@ -79,7 +85,7 @@ The website is a Cloudflare Pages project (`wrangler.toml`): the download page a
 
 1. Create a Supabase project and run the migration in its SQL editor. In Authentication > URL Configuration, set the site URL to `https://netlab.harnova.my/app/` and add it to the redirect URLs.
 2. Copy `.env.web.example` to `.env.web` and fill in the project URL, anon key and your DuitNow details. Put your DuitNow QR image at `brand/duitnow-qr.png`.
-3. Put the Supabase URL and anon key under `[vars]` in `wrangler.toml`, then add the `GROQ_API_KEY` secret in the Cloudflare Pages project settings (or `npx wrangler pages secret put GROQ_API_KEY`).
+3. Put the Supabase URL and anon key under `[vars]` in `wrangler.toml`, then add the `GROQ_API_KEY (and optionally GEMINI_API_KEY, CEREBRAS_API_KEY, OPENROUTER_API_KEY as fallbacks)` secret in the Cloudflare Pages project settings (or `npx wrangler pages secret put GROQ_API_KEY`).
 4. `./build-web.sh && npx wrangler pages deploy`
 5. Sign up on the site, then make yourself admin in the SQL editor:
    `update public.profiles set is_admin = true where email = 'you@example.com';`

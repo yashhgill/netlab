@@ -17,9 +17,14 @@ function mockFetch(profile: { pro_until: string | null; is_admin: boolean }, gro
     }
     if (url.includes('/rest/v1/profiles')) return new Response(JSON.stringify([profile]));
     if (url.includes('/rpc/bump_my_ai_usage')) return new Response('3');
+    if (url.startsWith('https://generativelanguage.googleapis.com')) {
+      groqCalls.push({ ...JSON.parse(String(init?.body)), provider: 'gemini' } as never);
+      return new Response(JSON.stringify({ choices: [{ message: { role: 'assistant', content: '{"reply":"From Gemini.","subnets":[],"actions":[]}' } }] }));
+    }
     if (url.startsWith('https://api.groq.com')) {
       groqCalls.push(JSON.parse(String(init?.body)));
       const next = groqReplies.shift();
+      if (next && typeof next === 'object' && '__rate' in (next as object)) return new Response(JSON.stringify({ error: { message: (next as { __rate: string }).__rate } }), { status: 429 });
       if (next === 'RATE') return new Response(JSON.stringify({ error: { message: 'Rate limit reached for model. Please try again in 0.05s.' } }), { status: 429 });
       return new Response(JSON.stringify({ choices: [{ message: next }] }));
     }
@@ -68,6 +73,16 @@ describe('/api/ai', () => {
     const r = await onRequestPost({ request: req('good', { prompt: 'hello' }), env });
     expect(r.status).toBe(200);
     expect((await r.json()).reply).toBe('Hi.');
+    expect(calls).toHaveLength(2);
+  });
+
+  it('hands over to the next free provider when one is busy', async () => {
+    const calls = mockFetch({ pro_until: null, is_admin: true }, [{ __rate: 'Rate limit reached. Please try again in 50s.' }]);
+    const r = await onRequestPost({ request: req('good', { prompt: 'hello' }), env: { ...env, GEMINI_API_KEY: 'g' } });
+    const body = await r.json();
+    expect(r.status).toBe(200);
+    expect(body.reply).toBe('From Gemini.');
+    expect(body.provider).toBe('Gemini');
     expect(calls).toHaveLength(2);
   });
 });

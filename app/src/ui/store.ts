@@ -2,12 +2,13 @@ import { useSyncExternalStore } from 'react';
 import { Engine, type CableType, type DeviceKind, type PduEvent } from '../engine/engine';
 import type { PduKind } from '../engine/packets';
 import type { Note } from '../engine/topology';
+import type { IconId, Shape, ShapeKind } from '../diagram/shapes';
 
 export const engine = new Engine();
 // expose for debugging in devtools
 (globalThis as Record<string, unknown>).netlab = engine;
 
-export type Tool = 'select' | 'inspect' | 'delete' | 'note' | 'pdu' | 'cable';
+export type Tool = 'select' | 'inspect' | 'delete' | 'note' | 'pdu' | 'cable' | 'shape';
 export type Tab = 'physical' | 'config' | 'cli' | 'desktop' | 'services';
 
 export interface DeviceWin {
@@ -42,13 +43,19 @@ export interface UiState {
   topZ: number;
   scenarios: Scenario[];
   notes: Note[];
+  shapes: Shape[];
+  /** Shape tool: what the next drag draws. */
+  drawKind: ShapeKind;
+  drawIcon: IconId | null;
+  shapeMenu: boolean;
+  editingShape: string | null;
   playing: boolean;
   speed: number; // ms per step
   filters: Record<PduKind, boolean>;
   fileName: string;
   dirty: boolean;
   showLabels: boolean;
-  selected: { kind: 'device' | 'link' | 'note'; id: string } | null;
+  selected: { kind: 'device' | 'link' | 'note' | 'shape'; id: string } | null;
   cableFrom: { dev: string; iface: string } | null;
   portPicker: { dev: string; x: number; y: number } | null;
   pduSrc: string | null;
@@ -108,6 +115,11 @@ let state: UiState = {
   topZ: 10,
   scenarios: [],
   notes: [],
+  shapes: [],
+  drawKind: 'rect',
+  drawIcon: null,
+  shapeMenu: false,
+  editingShape: null,
   playing: false,
   speed: 700,
   filters: { ARP: true, ICMP: true, DHCP: true },
