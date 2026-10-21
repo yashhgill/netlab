@@ -20,6 +20,8 @@ interface Env {
   SUPABASE_URL: string;
   SUPABASE_ANON_KEY: string;
   AI_DAILY_LIMIT?: string;
+  /** Set at runtime when the model doesn't accept reasoning_effort. */
+  __noReasoningParam?: boolean;
 }
 
 interface Ctx {
@@ -165,13 +167,18 @@ async function groqOnce(env: Env, messages: Msg[], extra: Record<string, unknown
       model: env.GROQ_MODEL || DEFAULT_MODEL,
       messages,
       temperature: 0.2,
-      max_completion_tokens: 4096,
-      reasoning_format: 'hidden',
+      max_completion_tokens: 2048,
+      ...(env.__noReasoningParam ? {} : { reasoning_effort: 'none' }),
       ...extra,
     }),
   });
   const body = (await r.json().catch(() => ({}))) as { choices?: { message: Msg }[]; error?: { message?: string } };
   if (r.status === 429) throw new RateLimited(body.error?.message || 'rate limited');
+  // models without a thinking switch reject reasoning_effort: remember and retry without it
+  if (r.status === 400 && /reasoning/i.test(body.error?.message ?? '') && !env.__noReasoningParam) {
+    env.__noReasoningParam = true;
+    return groqOnce(env, messages, extra);
+  }
   if (!r.ok) throw new Error(body.error?.message || `Groq returned ${r.status}`);
   return body.choices?.[0]?.message;
 }
@@ -202,7 +209,12 @@ export async function onRequestPost({ request, env }: Ctx): Promise<Response> {
   }
   const prompt = String(body.prompt || '').slice(0, 4000);
   if (!prompt.trim()) return json({ error: 'Type a question or a task first.' }, 400);
-  const topo = JSON.stringify(body.topology ?? {}).slice(0, 60000);
+  // The model catalogue is only needed when devices may be added; leaving it out keeps
+  // requests inside the provider's tokens-per-minute limit.
+  const t = { ...((body.topology ?? {}) as Record<string, unknown>) };
+  const devCount = Array.isArray(t.devices) ? t.devices.length : 0;
+  if (devCount >= 2 && !/\b(add|build|create|new|lab|design|more|extra|another)\b/i.test(prompt)) delete t.availableModels;
+  const topo = JSON.stringify(t).slice(0, 40000);
   const history = (body.history || []).slice(-4).map((h) => ({ role: h.role === 'assistant' ? 'assistant' : 'user', content: String(h.content).slice(0, 1500) }));
 
   const messages: Msg[] = [
