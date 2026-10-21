@@ -1,0 +1,12 @@
+HarNova Canvas
+Copyright 2026 HarNova Technology
+
+HarNova Canvas is a modified version of draw.io (https://github.com/jgraph/drawio),
+Copyright (c) JGraph Ltd and draw.io AG, licensed under the Apache License, Version 2.0
+(see LICENSE). Changes: product name, logos, page text, default settings and
+the app manifest. "draw.io" is a trademark of JGraph Ltd; HarNova Canvas is not
+affiliated with or endorsed by JGraph Ltd or draw.io AG.
+
+Shape libraries for third-party products (AWS, Google Cloud, Azure, Cisco and
+others) show those companies' icons for the purpose of drawing architectures
+that use their products; the icons remain the property of their owners.

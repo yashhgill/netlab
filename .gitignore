@@ -7,3 +7,6 @@ app/src-tauri/gen/schemas/
 _site/
 .env.web
 .wrangler/
+_desktop/
+studio/_site/
+canvas/_site/

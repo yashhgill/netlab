@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>HarNova Studio</title>
+  <meta name="description" content="HarNova Studio: free, open-source tools for students. NetLab network simulator and HarNova Canvas diagrams, in the browser or as one download for Windows, macOS and Linux." />
+  <meta property="og:title" content="HarNova Studio" />
+  <meta property="og:description" content="NetLab network simulator and HarNova Canvas diagrams. Free and open source." />
+  <link rel="icon" href="favicon.ico" sizes="32x32" />
+  <link rel="icon" type="image/svg+xml" href="logo.svg" />
+  <link rel="apple-touch-icon" href="apple-touch-icon.png" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <meta name="theme-color" content="#1d2630" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --slate: #1d2630;
+      --slate-2: #273342;
+      --ink: #18212b;
+      --muted: #5d6b78;
+      --canvas: #edf1f4;
+      --grid: #c9d2da;
+      --line: #d5dce2;
+      --paper: #ffffff;
+      --cobalt: #2f5bea;
+      --cobalt-dark: #2449c9;
+      --sans: 'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
+      --mono: 'IBM Plex Mono', ui-monospace, Menlo, Consolas, monospace;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body { margin: 0; font-family: var(--sans); color: var(--ink); background: var(--canvas); font-size: 17px; line-height: 1.55; -webkit-font-smoothing: antialiased; }
+    a { color: var(--cobalt); }
+    :focus-visible { outline: 2px solid var(--cobalt); outline-offset: 3px; border-radius: 4px; }
+    .wrap { max-width: 1120px; margin: 0 auto; padding: 0 max(20px, env(safe-area-inset-left)); }
+
+    header { position: sticky; top: 0; z-index: 10; background: rgba(29, 38, 48, 0.96); color: #fff; padding-top: env(safe-area-inset-top); }
+    .nav { display: flex; align-items: center; gap: 24px; height: 60px; }
+    .logo { display: flex; align-items: center; gap: 10px; color: #fff; text-decoration: none; font-weight: 600; font-size: 18px; }
+    .nav-links { display: flex; gap: 22px; margin-left: auto; }
+    .nav-links a { color: #c9d4de; text-decoration: none; font-size: 15px; }
+    .nav-links a:hover { color: #fff; }
+
+    .hero { background: var(--slate); color: #fff; padding: 56px 0 120px; background-image: radial-gradient(#33414f 1.1px, transparent 1.2px); background-size: 24px 24px; }
+    .hero h1 { font-size: clamp(36px, 5.6vw, 68px); line-height: 1.04; letter-spacing: -0.03em; font-weight: 700; margin: 0; max-width: 16ch; }
+    .hero p { font-size: 19px; color: #b3c1cd; max-width: 56ch; margin: 18px 0 0; }
+
+    .apps { margin-top: -84px; display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 16px; }
+    .app { position: relative; display: flex; flex-direction: column; gap: 10px; padding: 22px; background: var(--paper); border: 1px solid var(--line); border-radius: 16px; color: var(--ink); text-decoration: none; box-shadow: 0 12px 34px rgba(24, 33, 43, 0.12); transition: transform .15s, box-shadow .15s; min-height: 220px; }
+    a.app:hover { transform: translateY(-2px); box-shadow: 0 18px 44px rgba(24, 33, 43, 0.18); }
+    .app img, .app .icon { width: 56px; height: 56px; border-radius: 14px; }
+    .app h2 { margin: 6px 0 0; font-size: 21px; letter-spacing: -0.01em; }
+    .app p { margin: 0; color: var(--muted); font-size: 15px; flex: 1; }
+    .app .open { align-self: flex-start; display: inline-flex; align-items: center; gap: 6px; font-weight: 500; font-size: 15px; color: var(--cobalt); }
+    .app.soon { background: #f7f9fb; box-shadow: none; border-style: dashed; }
+    .app.soon .icon { filter: grayscale(0.6); opacity: 0.7; }
+    .badge { position: absolute; top: 18px; right: 18px; font-size: 12px; font-weight: 500; color: var(--muted); background: var(--canvas); border: 1px solid var(--line); border-radius: 99px; padding: 2px 10px; }
+
+    section { padding: 72px 0; }
+    h3 { font-size: clamp(26px, 3vw, 36px); letter-spacing: -0.02em; line-height: 1.15; margin: 0 0 12px; font-weight: 600; }
+    .lede { color: #3b4855; font-size: 18px; max-width: 60ch; margin: 0 0 32px; }
+
+    .downloads { background: var(--paper); border-top: 1px solid var(--line); }
+    .dl-table { width: 100%; border-collapse: collapse; }
+    .dl-table th { text-align: left; font-weight: 500; color: var(--muted); font-size: 14px; padding: 0 12px 10px 0; }
+    .dl-table td { padding: 16px 12px 16px 0; border-top: 1px solid var(--line); vertical-align: middle; }
+    .dl-table tr.mine td { background: rgba(47, 91, 234, 0.06); }
+    .dl-table tr.mine td:first-child { box-shadow: inset 3px 0 0 var(--cobalt); padding-left: 14px; }
+    .dl-os { font-weight: 600; font-size: 17px; }
+    .dl-sub { color: var(--muted); font-size: 14px; }
+    .dl-file { font-family: var(--mono); font-size: 13px; color: var(--muted); }
+    .btn { white-space: nowrap; display: inline-flex; align-items: center; gap: 8px; text-decoration: none; font-weight: 500; font-size: 15px; border-radius: 8px; padding: 9px 16px; border: 1px solid #b8c3cd; color: var(--ink); background: var(--paper); }
+    .btn:hover { background: #f6f8fa; }
+    .note { margin-top: 24px; max-width: 70ch; font-size: 15px; color: var(--muted); border-left: 2px solid var(--line); padding-left: 16px; }
+
+    footer { padding: 36px 0 calc(36px + env(safe-area-inset-bottom)); font-size: 14px; color: var(--muted); }
+    .foot { display: flex; flex-wrap: wrap; gap: 12px 28px; justify-content: space-between; }
+    .foot a { color: var(--muted); }
+
+    /* inside the desktop app: just the launcher */
+    body.desktop .hero { padding: 36px 0 108px; }
+    body.desktop .hero p.web-only, body.desktop .nav-links, body.desktop .downloads, body.desktop .web-only { display: none; }
+
+    @media (max-width: 760px) {
+      .nav-links { display: none; }
+      .hero { padding: 36px 0 104px; }
+      .dl-table th:nth-child(2), .dl-table td:nth-child(2) { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="wrap nav">
+      <a class="logo" href="#" aria-label="HarNova Studio home">
+        <img src="logo.svg" width="30" height="30" alt="" />
+        HarNova Studio
+      </a>
+      <nav class="nav-links" aria-label="Page">
+        <a href="#apps">Apps</a>
+        <a href="#download">Download</a>
+        <a href="https://github.com/yashhgill/netlab">Open source</a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <div class="hero">
+      <div class="wrap">
+        <h1 id="greeting">Free tools for building and drawing networks.</h1>
+        <p class="web-only">Simulate routers, switches and PCs in NetLab, and draw any diagram in HarNova Canvas, from flowcharts to AWS, Google Cloud and Azure architectures. Free, open source, in the browser or as one download.</p>
+      </div>
+    </div>
+
+    <div class="wrap" id="apps">
+      <div class="apps">
+        <a class="app" id="app-netlab" href="https://netlab.harnova.my/app/">
+          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect width="24" height="24" rx="5" fill="#1d2733"/><circle cx="6" cy="12" r="2.6" fill="#7FD6CF"/><circle cx="18" cy="6.5" r="2.6" fill="#A9ADF2"/><circle cx="18" cy="17.5" r="2.6" fill="#F2C14E"/><path d="M8.4 12 L15.6 7.6 M8.4 12 L15.6 16.4" stroke="#DCE6EE" stroke-width="1.6"/></svg>
+          <h2>NetLab</h2>
+          <p>Network simulator. Routers, switches, VLANs, DHCP, Wi-Fi and an IOS-style command line. Opens Packet Tracer files.</p>
+          <span class="open">Open NetLab →</span>
+        </a>
+        <a class="app" id="app-canvas" href="canvas/">
+          <img src="canvas/images/drawlogo128.png" alt="" />
+          <h2>HarNova Canvas</h2>
+          <p>Diagrams of every kind: flowcharts, UML, network maps and cloud architectures with AWS, Google Cloud and Azure icons.</p>
+          <span class="open">Open Canvas →</span>
+        </a>
+        <div class="app soon" aria-disabled="true">
+          <span class="badge">Coming soon</span>
+          <svg class="icon" viewBox="0 0 56 56" aria-hidden="true"><rect width="56" height="56" rx="14" fill="#2f5bea"/><path d="M17 15h16l7 7v19H17z" fill="#fff"/><path d="M21 27h14M21 32h14M21 37h9" stroke="#2f5bea" stroke-width="2.2"/></svg>
+          <h2>HarNova Docs</h2>
+          <p>Write reports and lab write-ups, with diagrams from Canvas and NetLab dropped straight in.</p>
+        </div>
+        <div class="app soon" aria-disabled="true">
+          <span class="badge">Coming soon</span>
+          <svg class="icon" viewBox="0 0 56 56" aria-hidden="true"><rect width="56" height="56" rx="14" fill="#22a55b"/><rect x="15" y="15" width="26" height="26" rx="2" fill="#fff"/><path d="M15 24h26M15 32h26M24 15v26M33 15v26" stroke="#22a55b" stroke-width="2"/></svg>
+          <h2>HarNova Sheets</h2>
+          <p>Spreadsheets for subnet plans, IP address tables, budgets and lab results.</p>
+        </div>
+      </div>
+    </div>
+
+    <section class="downloads" id="download">
+      <div class="wrap">
+        <h3>One download, every app</h3>
+        <p class="lede">HarNova Studio for your computer includes NetLab and HarNova Canvas, and both work offline. On phones and tablets, use the apps in the browser.</p>
+        <table class="dl-table">
+          <thead><tr><th>System</th><th>File</th><th></th></tr></thead>
+          <tbody id="dl-rows">
+            <tr data-os="win" data-key="win-exe"><td><div class="dl-os">Windows</div><div class="dl-sub">Windows 10 and 11, installer</div></td><td class="dl-file">.exe</td><td><a class="btn" href="#">Download</a></td></tr>
+            <tr data-os="mac" data-key="mac-arm"><td><div class="dl-os">macOS (Apple silicon)</div><div class="dl-sub">M1 and newer</div></td><td class="dl-file">.dmg</td><td><a class="btn" href="#">Download</a></td></tr>
+            <tr data-os="mac" data-key="mac-x64"><td><div class="dl-os">macOS (Intel)</div><div class="dl-sub">Older Macs</div></td><td class="dl-file">.dmg</td><td><a class="btn" href="#">Download</a></td></tr>
+            <tr data-os="linux" data-key="linux-appimage"><td><div class="dl-os">Linux</div><div class="dl-sub">AppImage, runs on most distributions</div></td><td class="dl-file">.AppImage</td><td><a class="btn" href="#">Download</a></td></tr>
+            <tr data-os="linux" data-key="linux-deb"><td><div class="dl-os">Debian and Ubuntu</div><div class="dl-sub">.deb package</div></td><td class="dl-file">.deb</td><td><a class="btn" href="#">Download</a></td></tr>
+          </tbody>
+        </table>
+        <p class="note" id="dl-meta">The newest release is listed on <a href="https://github.com/yashhgill/netlab/releases/latest">GitHub</a>.</p>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="wrap foot">
+      <span>© 2026 HarNova Technology. NetLab is MIT licensed. HarNova Canvas is based on <a href="https://github.com/jgraph/drawio">draw.io</a> by JGraph Ltd (Apache License 2.0) and is not affiliated with JGraph.</span>
+      <span><a href="https://harnova.my">harnova.my</a></span>
+    </div>
+  </footer>
+
+  <script>
+    // Inside the desktop app the apps are bundled next to this page; on the web NetLab has its own site.
+    const desktop = '__TAURI_INTERNALS__' in window;
+    if (desktop) {
+      document.body.classList.add('desktop');
+      document.getElementById('app-netlab').href = 'netlab/index.html';
+      document.getElementById('app-canvas').href = 'canvas/index.html';
+      const h = new Date().getHours();
+      document.getElementById('greeting').textContent = h < 12 ? 'Good morning. What are we building?' : h < 18 ? 'Good afternoon. What are we building?' : 'Good evening. What are we building?';
+    } else {
+      const REPO = 'yashhgill/netlab';
+      const p = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || '';
+      const ua = navigator.userAgent;
+      const os = /iPhone|iPad|Android/i.test(ua) ? 'web' : /Mac/i.test(p) || /Mac OS X/.test(ua) ? 'mac' : /Win/i.test(p) ? 'win' : /Linux|X11/i.test(p) ? 'linux' : 'web';
+      const MATCH = {
+        'mac-arm': (n) => /aarch64\.dmg$/i.test(n),
+        'mac-x64': (n) => /x64\.dmg$/i.test(n),
+        'win-exe': (n) => /setup\.exe$/i.test(n),
+        'linux-appimage': (n) => /\.AppImage$/.test(n),
+        'linux-deb': (n) => /\.deb$/.test(n),
+      };
+      const rows = [...document.querySelectorAll('#dl-rows tr')];
+      rows.forEach((r) => {
+        if (r.dataset.os === os) r.classList.add('mine');
+        r.querySelector('a').href = `https://github.com/${REPO}/releases/latest`;
+      });
+      fetch(`https://api.github.com/repos/${REPO}/releases/latest`, { headers: { Accept: 'application/vnd.github+json' } })
+        .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
+        .then((rel) => {
+          rows.forEach((r) => {
+            const asset = (rel.assets || []).find((x) => MATCH[r.dataset.key](x.name));
+            const a = r.querySelector('a');
+            if (asset) {
+              a.href = asset.browser_download_url;
+              r.querySelector('.dl-file').textContent = `${asset.name}  ${(asset.size / 1048576).toFixed(1)} MB`;
+            }
+          });
+          document.getElementById('dl-meta').textContent = `Version ${rel.tag_name}, released ${new Date(rel.published_at).toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' })}.`;
+        })
+        .catch(() => {
+          document.getElementById('dl-meta').innerHTML = 'Desktop downloads appear here with the first HarNova Studio release. Until then, use the apps in your browser.';
+        });
+    }
+  </script>
+</body>
+</html>

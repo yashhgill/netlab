@@ -26,6 +26,16 @@ An open-source network simulator for the browser and the desktop. Build a topolo
 
 Not yet: dynamic routing protocols (RIP, OSPF), STP, ACLs, NAT and wireless. Contributions are welcome.
 
+## HarNova Studio and HarNova Canvas
+
+HarNova Studio is the launcher: one desktop download (Windows, macOS, Linux) with NetLab and HarNova Canvas inside, both working offline. On the web it lives at studio.harnova.my, with Canvas at studio.harnova.my/canvas/.
+
+HarNova Canvas is a diagram editor based on [draw.io](https://github.com/jgraph/drawio) (Apache License 2.0, by JGraph Ltd). `canvas/build.sh` downloads a fixed draw.io release and `canvas/rebrand.py` renames it (name, logos, page text, manifest), keeps the licence and adds a NOTICE. HarNova Canvas is not affiliated with JGraph. It opens with the general, network, Cisco, AWS, Google Cloud, Azure and Kubernetes libraries, keeps files on the user's device, and makes no calls to outside services. To move to a newer draw.io, change `DRAWIO_TAG` in `canvas/build.sh`.
+
+- `bash studio/build.sh web` builds the Studio site (launcher + Canvas) into `studio/_site`.
+- `bash studio/build.sh desktop` builds the desktop bundle (launcher + NetLab + Canvas) into `_desktop`; the Tauri build runs this automatically.
+- NetLab's File > Export > Open in HarNova Canvas sends the current lab to Canvas as a draw.io diagram.
+
 ## Diagrams on the same workspace
 
 The shapes button on the tool palette (or **S**) adds draw.io-style objects next to the live network: rectangles, rounded boxes, ellipses, diamonds, zones (shaded areas for rooms, buildings, VLANs or subnets), text, lines and arrows, plus drawing-only icons (firewall, cloud, internet, server rack, users, building, database, security, ISP tower). Lines and arrows snap to devices and shapes and follow them when they move. Select a shape to change its fill, border, dash, text size and order.

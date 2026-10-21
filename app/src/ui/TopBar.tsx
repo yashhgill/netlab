@@ -90,6 +90,28 @@ export async function doExportDrawio() {
   if (name) toast(`Saved ${name}. Open it in draw.io (diagrams.net) or back in NetLab.`);
 }
 
+/** Where HarNova Studio lives: next to NetLab in the desktop app, its own site on the web. */
+export const STUDIO_URL = isDesktop ? '../index.html' : 'https://studio.harnova.my/';
+const CANVAS_URL = isDesktop ? '../canvas/index.html' : 'https://studio.harnova.my/canvas/';
+
+/** Hand the workspace to HarNova Canvas (draw.io-based) as a compressed diagram in the link. */
+export async function doOpenInCanvas() {
+  const { toDrawio } = await import('../diagram/drawio');
+  const { deflateSync } = await import('fflate');
+  const st = getState();
+  const xml = toDrawio(engine, st.shapes, st.notes, st.fileName);
+  const packed = deflateSync(new TextEncoder().encode(encodeURIComponent(xml)), { level: 9 });
+  let bin = '';
+  for (let i = 0; i < packed.length; i += 0x8000) bin += String.fromCharCode(...packed.subarray(i, i + 0x8000));
+  const url = `${CANVAS_URL}#R${encodeURIComponent(btoa(bin))}`;
+  if (url.length > 1_500_000) {
+    toast('This lab is too big to send directly. Use File > Export > draw.io diagram, then open the file in HarNova Canvas.', 'error');
+    return;
+  }
+  if (isDesktop) location.assign(url);
+  else window.open(url, '_blank', 'noopener');
+}
+
 /** Every router and switch configuration in one text file, ready to paste into a real or simulated device. */
 export async function doExportConfigs() {
   const parts: string[] = [];
@@ -197,7 +219,7 @@ export function TopBar() {
 
   return (
     <header className="topbar">
-      <div className="brand">
+      <a className="brand" href={STUDIO_URL} target={isDesktop ? undefined : '_blank'} rel="noopener" title="HarNova Studio: all apps">
         <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true">
           <circle cx="5" cy="12" r="3" fill="#7FD6CF" />
           <circle cx="19" cy="5" r="3" fill="#A9ADF2" />
@@ -205,7 +227,7 @@ export function TopBar() {
           <path d="M8 12 L16 6 M8 12 L16 18" stroke="#DCE6EE" strokeWidth="1.8" />
         </svg>
         <span className="brand-name">NetLab</span>
-      </div>
+      </a>
       <nav className="menus" onPointerDown={(e) => e.stopPropagation()}>
         {['File', 'Edit', 'View', 'Help'].map((m) => (
           <div key={m} className="menu">
@@ -225,6 +247,7 @@ export function TopBar() {
                     {item('Picture (SVG)', () => doExportPicture('svg'))}
                     {item('PDF for reports', () => doExportPicture('pdf'))}
                     {item('draw.io diagram (.drawio)', doExportDrawio)}
+                    {item('Open in HarNova Canvas', doOpenInCanvas)}
                     {item('Device configs (.txt)', doExportConfigs)}
                   </>
                 )}
@@ -246,6 +269,7 @@ export function TopBar() {
                   <>
                     {item('Keyboard shortcuts', () => setState({ dialog: 'shortcuts' }))}
                     {item('About NetLab', () => setState({ dialog: 'about' }))}
+                    {item('HarNova Studio (all apps)', () => (isDesktop ? location.assign(STUDIO_URL) : window.open(STUDIO_URL, '_blank', 'noopener')))}
                   </>
                 )}
               </div>
