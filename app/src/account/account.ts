@@ -18,6 +18,40 @@ export const DUITNOW = {
   name: (import.meta.env.VITE_DUITNOW_NAME as string | undefined) ?? 'HarNova Technology',
 };
 
+/** Google sign-in shows only once the provider is switched on in Supabase. */
+export const GOOGLE_ENABLED = import.meta.env.VITE_GOOGLE_AUTH === '1';
+
+/** Payment details the admin sets from the Admin panel (stored in Supabase). */
+export interface PaymentSettings {
+  name: string;
+  duitnow_id: string;
+  /** QR image as a data URL. */
+  qr: string;
+  monthly: number;
+  yearly: number;
+}
+
+export const DEFAULT_PAYMENT: PaymentSettings = { name: DUITNOW.name, duitnow_id: DUITNOW.id, qr: '', monthly: PRICES.monthly, yearly: PRICES.yearly };
+
+export async function loadPaymentSettings(): Promise<PaymentSettings> {
+  if (!supabase) return DEFAULT_PAYMENT;
+  const { data } = await supabase.from('app_settings').select('value').eq('key', 'payment').maybeSingle();
+  const v = (data?.value ?? {}) as Partial<PaymentSettings>;
+  return {
+    name: v.name || DEFAULT_PAYMENT.name,
+    duitnow_id: v.duitnow_id ?? DEFAULT_PAYMENT.duitnow_id,
+    qr: v.qr ?? '',
+    monthly: Number(v.monthly) > 0 ? Number(v.monthly) : DEFAULT_PAYMENT.monthly,
+    yearly: Number(v.yearly) > 0 ? Number(v.yearly) : DEFAULT_PAYMENT.yearly,
+  };
+}
+
+export async function savePaymentSettings(v: PaymentSettings): Promise<string | null> {
+  if (!supabase) return 'Not configured';
+  const { error } = await supabase.from('app_settings').upsert({ key: 'payment', value: v, updated_at: new Date().toISOString() });
+  return error ? error.message : null;
+}
+
 export const supabase: SupabaseClient | null = URL && KEY ? createClient(URL, KEY, { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true } }) : null;
 
 export const accountsEnabled = !!supabase;
@@ -45,7 +79,7 @@ interface AccountState {
   ready: boolean;
   session: Session | null;
   profile: Profile | null;
-  dialog: 'signin' | 'upgrade' | 'admin' | null;
+  dialog: 'signin' | 'upgrade' | 'admin' | 'newpassword' | null;
 }
 
 let state: AccountState = { ready: !supabase, session: null, profile: null, dialog: null };
@@ -89,10 +123,11 @@ if (supabase) {
     set({ session: data.session, ready: true });
     refreshProfile();
   });
-  supabase.auth.onAuthStateChange((_e, session) => {
+  supabase.auth.onAuthStateChange((e, session) => {
     set({ session });
     refreshProfile();
-    if (session && state.dialog === 'signin') set({ dialog: null });
+    if (e === 'PASSWORD_RECOVERY') set({ dialog: 'newpassword' });
+    else if (session && state.dialog === 'signin') set({ dialog: null });
   });
 }
 
@@ -103,6 +138,33 @@ function redirectTo() {
 export async function signInWithEmail(email: string): Promise<string | null> {
   if (!supabase) return 'Accounts are not set up on this copy of NetLab.';
   const { error } = await supabase.auth.signInWithOtp({ email, options: { emailRedirectTo: redirectTo() } });
+  return error ? error.message : null;
+}
+
+export async function signUpWithPassword(email: string, password: string): Promise<{ error: string | null; confirm: boolean }> {
+  if (!supabase) return { error: 'Accounts are not set up on this copy of NetLab.', confirm: false };
+  const { data, error } = await supabase.auth.signUp({ email, password, options: { emailRedirectTo: redirectTo() } });
+  if (error) return { error: error.message, confirm: false };
+  // no session means Supabase wants the email confirmed first
+  return { error: null, confirm: !data.session };
+}
+
+export async function signInWithPassword(email: string, password: string): Promise<string | null> {
+  if (!supabase) return 'Accounts are not set up on this copy of NetLab.';
+  const { error } = await supabase.auth.signInWithPassword({ email, password });
+  if (!error) return null;
+  return /invalid login/i.test(error.message) ? 'That email and password don\'t match. Check them, or create an account.' : error.message;
+}
+
+export async function sendPasswordReset(email: string): Promise<string | null> {
+  if (!supabase) return 'Accounts are not set up on this copy of NetLab.';
+  const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo: redirectTo() });
+  return error ? error.message : null;
+}
+
+export async function setNewPassword(password: string): Promise<string | null> {
+  if (!supabase) return 'Not configured';
+  const { error } = await supabase.auth.updateUser({ password });
   return error ? error.message : null;
 }
 
@@ -123,13 +185,13 @@ export async function myPayments(): Promise<PaymentRequest[]> {
   return (data as PaymentRequest[]) ?? [];
 }
 
-export async function submitPayment(plan: 'monthly' | 'yearly', reference: string): Promise<string | null> {
+export async function submitPayment(plan: 'monthly' | 'yearly', reference: string, amount: number): Promise<string | null> {
   if (!supabase || !state.session) return 'Sign in first.';
   const { error } = await supabase.from('payment_requests').insert({
     user_id: state.session.user.id,
     email: state.session.user.email,
     plan,
-    amount_rm: PRICES[plan],
+    amount_rm: amount,
     reference: reference.trim(),
   });
   return error ? error.message : null;

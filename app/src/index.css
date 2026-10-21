@@ -2464,3 +2464,26 @@ h3 {
   color: var(--text-2, inherit);
 }
 .import-warnings li + li { margin-top: 3px; }
+
+.pay-settings {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 200px;
+  gap: 16px;
+  align-items: start;
+}
+.pay-prices { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.qr-upload { align-items: center; text-align: center; }
+.qr-upload .btn { cursor: pointer; }
+.qr-empty {
+  display: grid;
+  place-items: center;
+  width: 160px;
+  height: 160px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  color: var(--muted, #8592a0);
+  font-size: 13px;
+}
+@media (max-width: 560px) {
+  .pay-settings { grid-template-columns: 1fr; }
+}

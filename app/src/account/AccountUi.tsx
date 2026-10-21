@@ -6,13 +6,19 @@ import {
   adminPayments,
   adminSetPro,
   adminUsers,
-  DUITNOW,
+  DEFAULT_PAYMENT,
+  GOOGLE_ENABLED,
   isPro,
+  loadPaymentSettings,
+  savePaymentSettings,
+  sendPasswordReset,
+  setNewPassword,
+  signInWithPassword,
+  signUpWithPassword,
+  type PaymentSettings,
   myPayments,
   openAccountDialog,
-  PRICES,
   refreshProfile,
-  signInWithEmail,
   signInWithGoogle,
   signOut,
   submitPayment,
@@ -74,7 +80,7 @@ export function AccountDialogs() {
     <div className="modal-back" onPointerDown={close}>
       <div className={`modal${dialog === 'admin' ? ' wide' : ''}`} role="dialog" aria-label={dialog} onPointerDown={(e) => e.stopPropagation()}>
         <div className="modal-head">
-          <h2>{dialog === 'signin' ? 'Sign in to NetLab' : dialog === 'upgrade' ? 'NetLab Pro' : 'Admin'}</h2>
+          <h2>{dialog === 'signin' ? 'Sign in to NetLab' : dialog === 'upgrade' ? 'NetLab Pro' : dialog === 'newpassword' ? 'Choose a new password' : 'Admin'}</h2>
           <button className="icon-btn" onClick={close} aria-label="Close">
             <UiIcon.close />
           </button>
@@ -82,25 +88,41 @@ export function AccountDialogs() {
         {dialog === 'signin' && <SignIn />}
         {dialog === 'upgrade' && <Upgrade />}
         {dialog === 'admin' && <Admin />}
+        {dialog === 'newpassword' && <NewPassword />}
       </div>
     </div>
   );
 }
 
+const GoogleLogo = () => (
+  <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true">
+    <path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 13 4 4 13 4 24s9 20 20 20 20-9 20-20c0-1.3-.1-2.4-.4-3.5z" />
+    <path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z" />
+    <path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-8l-6.5 5C9.5 39.6 16.2 44 24 44z" />
+    <path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.4-.4-3.5z" />
+  </svg>
+);
+
 function SignIn() {
+  const [mode, setMode] = useState<'signin' | 'signup' | 'forgot'>('signin');
   const [email, setEmail] = useState('');
-  const [sent, setSent] = useState(false);
+  const [pw, setPw] = useState('');
+  const [note, setNote] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  if (sent) {
+  const emailOk = /.+@.+\..+/.test(email);
+  const go = (m: typeof mode) => {
+    setMode(m);
+    setErr(null);
+    setNote(null);
+  };
+  if (note) {
     return (
       <div className="stack">
-        <p>
-          We sent a sign-in link to <strong>{email}</strong>. Open it on this device to finish signing in.
-        </p>
-        <p className="muted small">No email after a minute? Check your spam folder, or go back and send it again.</p>
-        <button className="btn" onClick={() => setSent(false)}>
-          Back
+        <p>{note}</p>
+        <p className="muted small">No email after a minute? Check your spam folder.</p>
+        <button className="btn" onClick={() => go('signin')}>
+          Back to sign in
         </button>
       </div>
     );
@@ -111,37 +133,102 @@ function SignIn() {
       onSubmit={async (e) => {
         e.preventDefault();
         setBusy(true);
-        const r = await signInWithEmail(email);
+        setErr(null);
+        if (mode === 'signin') setErr(await signInWithPassword(email, pw));
+        else if (mode === 'signup') {
+          const r = await signUpWithPassword(email, pw);
+          if (r.error) setErr(r.error);
+          else if (r.confirm) setNote(`We sent a confirmation link to ${email}. Open it to finish creating your account.`);
+        } else {
+          const r = await sendPasswordReset(email);
+          if (r) setErr(r);
+          else setNote(`If ${email} has an account, a link to choose a new password is on its way.`);
+        }
         setBusy(false);
-        if (r) setErr(r);
-        else setSent(true);
       }}
     >
-      <p className="muted">Your topologies stay on this device. An account is needed for the AI assistant.</p>
-      <button
-        type="button"
-        className="btn google"
-        onClick={async () => {
-          const r = await signInWithGoogle();
-          if (r) setErr(r);
-        }}
-      >
-        <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true">
-          <path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 13 4 4 13 4 24s9 20 20 20 20-9 20-20c0-1.3-.1-2.4-.4-3.5z" />
-          <path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z" />
-          <path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-8l-6.5 5C9.5 39.6 16.2 44 24 44z" />
-          <path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.4-.4-3.5z" />
-        </svg>
-        Continue with Google
-      </button>
-      <div className="or">or</div>
+      <div className="seg" role="tablist">
+        <button type="button" role="tab" aria-selected={mode === 'signin'} className={mode === 'signin' ? 'on' : ''} onClick={() => go('signin')}>
+          Sign in
+        </button>
+        <button type="button" role="tab" aria-selected={mode === 'signup'} className={mode === 'signup' ? 'on' : ''} onClick={() => go('signup')}>
+          Create account
+        </button>
+      </div>
+      <p className="muted small">Your topologies stay on this device. An account is needed for the AI assistant.</p>
+      {GOOGLE_ENABLED && mode !== 'forgot' && (
+        <>
+          <button
+            type="button"
+            className="btn google"
+            onClick={async () => {
+              const r = await signInWithGoogle();
+              if (r) setErr(r);
+            }}
+          >
+            <GoogleLogo />
+            Continue with Google
+          </button>
+          <div className="or">or</div>
+        </>
+      )}
       <label className="stack-field">
         <span>Email</span>
         <input id="signin-email" type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" />
       </label>
+      {mode !== 'forgot' && (
+        <label className="stack-field">
+          <span>Password</span>
+          <input
+            id="signin-password"
+            type="password"
+            autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
+            required
+            minLength={mode === 'signup' ? 8 : 1}
+            value={pw}
+            onChange={(e) => setPw(e.target.value)}
+            placeholder={mode === 'signup' ? 'At least 8 characters' : ''}
+          />
+        </label>
+      )}
       {err && <p className="field-err">{err}</p>}
-      <button className="btn primary" type="submit" disabled={busy || !/.+@.+\..+/.test(email)}>
-        {busy ? 'Sending…' : 'Email me a sign-in link'}
+      <button className="btn primary" type="submit" disabled={busy || !emailOk || (mode === 'signup' && pw.length < 8) || (mode === 'signin' && !pw)}>
+        {busy ? 'Please wait…' : mode === 'signin' ? 'Sign in' : mode === 'signup' ? 'Create account' : 'Email me a reset link'}
+      </button>
+      {mode === 'signin' && (
+        <button type="button" className="link-btn" onClick={() => go('forgot')}>
+          Forgot your password?
+        </button>
+      )}
+      {mode === 'forgot' && (
+        <button type="button" className="link-btn" onClick={() => go('signin')}>
+          Back to sign in
+        </button>
+      )}
+    </form>
+  );
+}
+
+function NewPassword() {
+  const [pw, setPw] = useState('');
+  const [err, setErr] = useState<string | null>(null);
+  return (
+    <form
+      className="stack"
+      onSubmit={async (e) => {
+        e.preventDefault();
+        const r = await setNewPassword(pw);
+        if (r) setErr(r);
+        else openAccountDialog(null);
+      }}
+    >
+      <label className="stack-field">
+        <span>New password</span>
+        <input id="new-password" type="password" autoComplete="new-password" minLength={8} required value={pw} onChange={(e) => setPw(e.target.value)} placeholder="At least 8 characters" />
+      </label>
+      {err && <p className="field-err">{err}</p>}
+      <button className="btn primary" type="submit" disabled={pw.length < 8}>
+        Save password
       </button>
     </form>
   );
@@ -155,11 +242,15 @@ function Upgrade() {
   const [list, setList] = useState<PaymentRequest[]>([]);
   const [err, setErr] = useState<string | null>(null);
   const [done, setDone] = useState(false);
-  const [qr, setQr] = useState(true);
+  const [pay, setPay] = useState<PaymentSettings>(DEFAULT_PAYMENT);
+  useEffect(() => {
+    loadPaymentSettings().then(setPay);
+  }, []);
   useEffect(() => {
     myPayments().then(setList);
     refreshProfile();
   }, [done]);
+  const PRICES = { monthly: pay.monthly, yearly: pay.yearly };
   if (!session) {
     return (
       <div className="stack">
@@ -201,7 +292,7 @@ function Upgrade() {
           className="stack"
           onSubmit={async (e) => {
             e.preventDefault();
-            const r = await submitPayment(plan, ref);
+            const r = await submitPayment(plan, ref, PRICES[plan]);
             if (r) setErr(r);
             else setDone(true);
           }}
@@ -210,16 +301,16 @@ function Upgrade() {
             <div>
               <strong>1. Pay RM {PRICES[plan].toFixed(2)} by DuitNow</strong>
               <p className="muted small">
-                To {DUITNOW.name}
-                {DUITNOW.id && (
+                To {pay.name}
+                {pay.duitnow_id && (
                   <>
-                    , DuitNow ID <span className="mono">{DUITNOW.id}</span>
+                    , DuitNow ID <span className="mono">{pay.duitnow_id}</span>
                   </>
                 )}
-                . Scan the QR code with any Malaysian banking app or e-wallet.
+                .{pay.qr ? ' Scan the QR code with any Malaysian banking app or e-wallet.' : ''}
               </p>
             </div>
-            {qr && <img src="./duitnow-qr.png" alt="DuitNow QR code" className="qr" onError={() => setQr(false)} />}
+            {pay.qr && <img src={pay.qr} alt="DuitNow QR code" className="qr" />}
           </div>
           <label className="stack-field">
             <span>2. Enter the payment reference or transaction ID from your receipt</span>
@@ -260,7 +351,7 @@ function Upgrade() {
 }
 
 function Admin() {
-  const [tab, setTab] = useState<'payments' | 'users'>('payments');
+  const [tab, setTab] = useState<'payments' | 'users' | 'settings'>('payments');
   const [filter, setFilter] = useState<'pending' | 'all'>('pending');
   const [pays, setPays] = useState<PaymentRequest[]>([]);
   const [users, setUsers] = useState<Profile[]>([]);
@@ -268,7 +359,7 @@ function Admin() {
   const [msg, setMsg] = useState<string | null>(null);
   const load = () => {
     if (tab === 'payments') adminPayments(filter).then(setPays);
-    else adminUsers(q).then(setUsers);
+    else if (tab === 'users') adminUsers(q).then(setUsers);
   };
   useEffect(load, [tab, filter, q]);
   return (
@@ -280,9 +371,14 @@ function Admin() {
         <button role="tab" aria-selected={tab === 'users'} className={tab === 'users' ? 'on' : ''} onClick={() => setTab('users')}>
           Users
         </button>
+        <button role="tab" aria-selected={tab === 'settings'} className={tab === 'settings' ? 'on' : ''} onClick={() => setTab('settings')}>
+          Payment settings
+        </button>
       </div>
       {msg && <p className="field-err">{msg}</p>}
-      {tab === 'payments' ? (
+      {tab === 'settings' ? (
+        <PaymentSettingsForm />
+      ) : tab === 'payments' ? (
         <>
           <div className="seg small">
             <button className={filter === 'pending' ? 'on' : ''} onClick={() => setFilter('pending')}>
@@ -404,5 +500,104 @@ function Admin() {
         </>
       )}
     </div>
+  );
+}
+
+/** Shrink an uploaded image so it fits comfortably in the database (QR codes stay sharp). */
+function readImage(file: File, max = 640): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const k = Math.min(1, max / Math.max(img.width, img.height));
+      const c = document.createElement('canvas');
+      c.width = Math.round(img.width * k);
+      c.height = Math.round(img.height * k);
+      const g = c.getContext('2d')!;
+      g.imageSmoothingEnabled = k === 1;
+      g.fillStyle = '#fff';
+      g.fillRect(0, 0, c.width, c.height);
+      g.drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(img.src);
+      resolve(c.toDataURL('image/png'));
+    };
+    img.onerror = () => reject(new Error('That file is not an image.'));
+    img.src = URL.createObjectURL(file);
+  });
+}
+
+function PaymentSettingsForm() {
+  const [v, setV] = useState<PaymentSettings | null>(null);
+  const [msg, setMsg] = useState<{ text: string; ok: boolean } | null>(null);
+  useEffect(() => {
+    loadPaymentSettings().then(setV);
+  }, []);
+  if (!v) return <p className="muted">Loading…</p>;
+  const up = (p: Partial<PaymentSettings>) => {
+    setV({ ...v, ...p });
+    setMsg(null);
+  };
+  return (
+    <form
+      className="stack"
+      onSubmit={async (e) => {
+        e.preventDefault();
+        const r = await savePaymentSettings(v);
+        setMsg(r ? { text: r, ok: false } : { text: 'Saved. The upgrade screen shows these details now.', ok: true });
+      }}
+    >
+      <div className="pay-settings">
+        <div className="stack">
+          <label className="stack-field">
+            <span>Pay to (name shown to customers)</span>
+            <input id="pay-name" value={v.name} onChange={(e) => up({ name: e.target.value })} />
+          </label>
+          <label className="stack-field">
+            <span>DuitNow ID (phone, IC or business number, optional)</span>
+            <input id="pay-duitnow" value={v.duitnow_id} onChange={(e) => up({ duitnow_id: e.target.value })} placeholder="e.g. 012-345 6789" />
+          </label>
+          <div className="pay-prices">
+            <label className="stack-field">
+              <span>Monthly (RM)</span>
+              <input id="pay-monthly" type="number" min="1" step="0.1" value={v.monthly} onChange={(e) => up({ monthly: Number(e.target.value) })} />
+            </label>
+            <label className="stack-field">
+              <span>Yearly (RM)</span>
+              <input id="pay-yearly" type="number" min="1" step="0.1" value={v.yearly} onChange={(e) => up({ yearly: Number(e.target.value) })} />
+            </label>
+          </div>
+        </div>
+        <div className="stack qr-upload">
+          <span className="small">DuitNow QR</span>
+          {v.qr ? <img src={v.qr} alt="Your DuitNow QR code" className="qr" /> : <div className="qr qr-empty">No QR yet</div>}
+          <label className="btn small">
+            {v.qr ? 'Replace QR image' : 'Upload QR image'}
+            <input
+              type="file"
+              accept="image/*"
+              hidden
+              onChange={async (e) => {
+                const f = e.target.files?.[0];
+                if (!f) return;
+                try {
+                  up({ qr: await readImage(f) });
+                } catch (er) {
+                  setMsg({ text: (er as Error).message, ok: false });
+                }
+              }}
+            />
+          </label>
+          {v.qr && (
+            <button type="button" className="link-btn danger" onClick={() => up({ qr: '' })}>
+              Remove
+            </button>
+          )}
+        </div>
+      </div>
+      {msg && <p className={msg.ok ? 'ok-note' : 'field-err'}>{msg.text}</p>}
+      <button className="btn primary" type="submit" disabled={!v.name.trim() || !(v.monthly > 0) || !(v.yearly > 0)}>
+        Save payment settings
+      </button>
+      <p className="muted small">Tip: in your bank app, open DuitNow QR → My QR / Receive, save it as an image, then upload it here. Crop it to just the QR for the sharpest result.</p>
+    </form>
   );
 }
