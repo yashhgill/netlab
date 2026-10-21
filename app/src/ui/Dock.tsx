@@ -66,6 +66,7 @@ const SUBS: Record<Top, { id: Category; label: string; kind: ModelSpec['kind']; 
     { id: 'routers', label: 'Routers', kind: 'router', model: 'NL-R1900' },
     { id: 'switches', label: 'Switches', kind: 'switch', model: 'NL-S2400' },
     { id: 'hubs', label: 'Hubs', kind: 'hub', model: 'NL-H800' },
+    { id: 'wireless', label: 'Wireless', kind: 'ap', model: 'NL-AP' },
   ],
   end: [{ id: 'end', label: 'End devices', kind: 'pc', model: 'NL-PC' }],
   connections: [],

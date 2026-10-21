@@ -1,12 +1,12 @@
 import { BCAST_MAC, newMac, network, parseIp } from '../addr';
 import { DhcpClient, DhcpServer, type DhcpPool } from '../dhcp';
-import { Device, type DeviceKind } from '../engine';
+import { Device, type DeviceKind, type WifiSettings } from '../engine';
 import { modelSpec } from '../models';
 import { IpStack, type L3If } from '../ipstack';
 import type { Frame } from '../packets';
 
 export const HOST_IF = 'FastEthernet0';
-export type HostKind = 'pc' | 'laptop' | 'server' | 'printer' | 'phone';
+export type HostKind = 'pc' | 'laptop' | 'server' | 'printer' | 'phone' | 'tablet' | 'smartphone' | 'tv';
 
 export class Host extends Device {
   kind: DeviceKind;
@@ -18,13 +18,20 @@ export class Host extends Device {
   dhcpServer: DhcpServer | null = null;
   dhcpStatus = '';
   terminal: string[] = [];
+  /** The NIC's port name: FastEthernet0 for wired hosts, Wireless0 for wireless ones. */
+  nicName: string;
+  /** Wireless settings, only on hosts with a wireless NIC. */
+  wifi?: WifiSettings;
 
   constructor(id: string, kind: HostKind, hostname: string, model?: string) {
     super(id, hostname);
     this.kind = kind;
     const spec = modelSpec(model, kind);
     this.model = spec.id;
-    this.ifaces.set(HOST_IF, { name: HOST_IF, mac: newMac(), adminUp: true, physical: true, speed: 100, media: 'copper' });
+    const p = spec.ports[0] ?? { name: HOST_IF, media: 'copper', speed: 100 };
+    this.nicName = p.name;
+    this.ifaces.set(p.name, { name: p.name, mac: newMac(), adminUp: true, physical: true, speed: p.speed, media: p.media });
+    if (p.media === 'wireless') this.wifi = { ssid: 'Default' };
     for (const m of spec.mgmt) this.mgmt.set(m.name, { name: m.name, mac: '000000000000', adminUp: true, physical: true, speed: m.speed, media: m.media });
     this.stack = new IpStack(
       {
@@ -34,7 +41,7 @@ export class Host extends Device {
       },
       { forwarding: false, ttl: 128 },
     );
-    this.dhcpClient = new DhcpClient(this.stack, HOST_IF);
+    this.dhcpClient = new DhcpClient(this.stack, this.nicName);
     this.dhcpClient.onBound = (m) => {
       const i = this.nic;
       i.ip = m.yiaddr;
@@ -62,7 +69,7 @@ export class Host extends Device {
   }
 
   get nic() {
-    return this.ifaces.get(HOST_IF)!;
+    return this.ifaces.get(this.nicName)!;
   }
 
   get gateway() {
@@ -72,6 +79,11 @@ export class Host extends Device {
   l3ifs(): L3If[] {
     const i = this.nic;
     return [{ name: i.name, ip: i.ip, mask: i.mask, mac: i.mac, up: this.lineUp(i.name) }];
+  }
+
+  setWifi(w: WifiSettings) {
+    this.wifi = { ssid: w.ssid, key: w.key || undefined };
+    this.engine?.bump();
   }
 
   setStatic(ip?: number, mask?: number, gw?: number, dns?: number) {
@@ -94,7 +106,7 @@ export class Host extends Device {
     this.dns = undefined;
     this.stack.arp.clear();
     this.dhcpStatus = 'Requesting IP Address...';
-    if (this.lineUp(HOST_IF)) this.dhcpClient.start();
+    if (this.lineUp(this.nicName)) this.dhcpClient.start();
     else this.dhcpClient.onFail();
     this.engine?.bump();
   }
@@ -154,6 +166,7 @@ export class Host extends Device {
       mask: this.ipMode === 'static' ? n.mask : undefined,
       gw: this.ipMode === 'static' ? this.stack.defaultGateway : undefined,
       dns: this.ipMode === 'static' ? this.dns : undefined,
+      wifi: this.wifi,
       dhcpService: this.dhcpServer ? { enabled: this.dhcpServer.enabled, pool: this.dhcpServer.pools[0] } : undefined,
     };
   }
@@ -164,6 +177,7 @@ export class Host extends Device {
     h.x = j.x;
     h.y = j.y;
     if (j.mac) h.nic.mac = j.mac;
+    if (h.wifi && j.wifi) h.wifi = { ssid: String(j.wifi.ssid ?? ''), key: j.wifi.key || undefined };
     h.ipMode = j.ipMode ?? 'static';
     if (h.ipMode === 'static') {
       h.nic.ip = j.ip ?? undefined;

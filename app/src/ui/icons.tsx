@@ -52,6 +52,7 @@ export const CABLE_STYLE: Record<CableType, { stroke: string; dash?: string; wid
   'serial-dce': { stroke: '#d9434e', width: 2.2 },
   'serial-dte': { stroke: '#d9434e', width: 2.2 },
   console: { stroke: '#5aa9de', width: 2.2 },
+  wireless: { stroke: '#7aa6d6', dash: '2 6', width: 1.6 },
 };
 
 export function CableSwatch({ type, big = false }: { type: CableType; big?: boolean }) {

@@ -29,6 +29,14 @@ const ACCENT: Record<string, string> = {
   'NL-S2960F': '#8fc94f',
   'NL-S3600': '#e0625b',
   'NL-H800': '#a0aab4',
+  'NL-R2800': '#3fa36b',
+  'NL-R4320': '#d7a32f',
+  'NL-R4330': '#c9662e',
+  'NL-RMOD': '#7d8a97',
+  'NL-S2924': '#6f86c9',
+  'NL-S3524': '#c4507a',
+  'NL-SMOD': '#7d8a97',
+  'NL-AP': '#4cb8d8',
 };
 
 /** Isometric box: front rectangle plus top and side faces. */
@@ -46,8 +54,8 @@ function Box({ x, y, w, h, d, front = C.front, top = C.top, side = C.side }: { x
 
 function RouterArt({ model }: { model: string }) {
   const accent = ACCENT[model] ?? ACCENT['NL-R3000'];
-  const serial = model === 'NL-R1900' || model === 'NL-R2900';
-  const ports = model === 'NL-R4400' ? 4 : model === 'NL-R1900' ? 2 : 3;
+  const serial = ['NL-R1900', 'NL-R2900', 'NL-R2800', 'NL-R4320', 'NL-R4330', 'NL-RMOD'].includes(model);
+  const ports = model === 'NL-R4400' || model === 'NL-RMOD' ? 4 : model === 'NL-R1900' || model === 'NL-R2800' || model === 'NL-R4320' ? 2 : 3;
   return (
     <g>
       <Box x={5} y={30} w={44} h={17} d={13} />
@@ -76,7 +84,7 @@ function RouterArt({ model }: { model: string }) {
 
 function SwitchArt({ model, kind }: { model: string; kind: DeviceKind }) {
   const accent = ACCENT[model] ?? ACCENT['NL-S2400'];
-  const cols = model === 'NL-S2448' ? 12 : 8;
+  const cols = model === 'NL-S2448' ? 12 : model === 'NL-SMOD' ? 6 : 8;
   const fiber = model === 'NL-S2960F' || model === 'NL-S3600';
   const ml = kind === 'l3switch';
   return (
@@ -106,16 +114,82 @@ function SwitchArt({ model, kind }: { model: string; kind: DeviceKind }) {
   );
 }
 
-function HubArt() {
+function HubArt({ model }: { model: string }) {
+  const n = model === 'NL-REP' ? 2 : model === 'NL-H6' ? 6 : 8;
   return (
     <g>
       <Box x={8} y={34} w={40} h={10} d={9} front="#6c7783" top="#97a2ad" side="#4c5560" />
-      {Array.from({ length: 8 }, (_, k) => (
+      {model === 'NL-REP' && <path d="M17 30.6 l5 -2.7 h16 l-5 2.7 z" fill="#c9d3dd" />}
+      {Array.from({ length: n }, (_, k) => (
         <g key={k}>
           <rect x={11.5 + k * 4.4} y={37.5} width={3.4} height={3.4} rx="0.4" fill={C.port} />
           <circle cx={13.2 + k * 4.4} cy={35.8} r="0.6" fill={k < 3 ? C.led : '#9aa4ae'} />
         </g>
       ))}
+    </g>
+  );
+}
+
+/** Radio waves above a point, used by wireless devices. */
+function Waves({ x, y, s = 1, color = '#4cb8d8' }: { x: number; y: number; s?: number; color?: string }) {
+  return (
+    <g transform={`translate(${x} ${y}) scale(${s})`} fill="none" stroke={color} strokeWidth="1.8" strokeLinecap="round">
+      <path d="M-3.5 -3 a5 5 0 0 1 7 0" />
+      <path d="M-6.5 -6 a9.2 9.2 0 0 1 13 0" />
+      <path d="M-9.5 -9 a13.4 13.4 0 0 1 19 0" opacity="0.7" />
+    </g>
+  );
+}
+
+function ApArt() {
+  return (
+    <g>
+      {/* antennas */}
+      <path d="M17 34 L13 16" stroke="#3b4653" strokeWidth="2.6" strokeLinecap="round" />
+      <path d="M47 34 L51 16" stroke="#3b4653" strokeWidth="2.6" strokeLinecap="round" />
+      <Waves x={32} y={26} s={0.9} />
+      <path d="M8 38 q24 -9 48 0 v6 q-24 6 -48 0 z" fill="#e4e9ee" stroke="#b9c3cc" strokeWidth="0.8" />
+      <path d="M8 44 q24 6 48 0 v3 q-24 6 -48 0 z" fill="#bcc6cf" />
+      <circle cx={24} cy={41.4} r="1.2" fill={C.led} />
+      <circle cx={30} cy={40.6} r="1.2" fill={C.led} />
+      <circle cx={36} cy={40.6} r="1.2" fill="#4cb8d8" />
+    </g>
+  );
+}
+
+function TabletArt() {
+  return (
+    <g>
+      <rect x={13} y={10} width={38} height={46} rx="4" fill="#2f3943" />
+      <rect x={16} y={14} width={32} height={36} rx="1.2" fill={C.screen} />
+      <path d="M18 46 L26 37 L31 42 L37 34 L46 46 Z" fill={C.screen2} opacity="0.8" />
+      <circle cx={32} cy={53} r="1.4" fill="#8592a0" />
+      <Waves x={44} y={24} s={0.55} color="#2f3943" />
+    </g>
+  );
+}
+
+function SmartphoneArt() {
+  return (
+    <g>
+      <rect x={20} y={8} width={24} height={48} rx="4" fill="#2f3943" />
+      <rect x={22.5} y={13} width={19} height={36} rx="1" fill={C.screen} />
+      <path d="M24 45 L29 39 L32 42 L36 37 L40 45 Z" fill={C.screen2} opacity="0.8" />
+      <rect x={28} y={10} width={8} height={1.2} rx="0.6" fill="#8592a0" />
+      <rect x={27} y={51.5} width={10} height={1.6} rx="0.8" fill="#8592a0" />
+      <Waves x={32} y={26} s={0.5} color="#2f3943" />
+    </g>
+  );
+}
+
+function TvArt() {
+  return (
+    <g>
+      <rect x={4} y={12} width={56} height={34} rx="2" fill="#2f3943" />
+      <rect x={7} y={15} width={50} height={28} rx="0.8" fill={C.screen} />
+      <path d="M9 41 L20 30 L27 36 L36 26 L55 41 Z" fill={C.screen2} opacity="0.8" />
+      <path d="M26 46 h12 l2 5 h-16 z" fill="#3b4653" />
+      <rect x={18} y={51} width={28} height={2.4} rx="1.2" fill="#3b4653" />
     </g>
   );
 }
@@ -204,11 +278,29 @@ export function DeviceArt({ kind, model = '' }: { kind: DeviceKind; model?: stri
     case 'l3switch':
       return <SwitchArt model={model} kind={kind} />;
     case 'hub':
-      return <HubArt />;
+      return <HubArt model={model} />;
+    case 'ap':
+      return <ApArt />;
+    case 'tablet':
+      return <TabletArt />;
+    case 'smartphone':
+      return <SmartphoneArt />;
+    case 'tv':
+      return <TvArt />;
     case 'pc':
-      return <PcArt />;
+      return (
+        <g>
+          <PcArt />
+          {model.endsWith('-W') && <Waves x={49} y={14} s={0.5} />}
+        </g>
+      );
     case 'laptop':
-      return <LaptopArt />;
+      return (
+        <g>
+          <LaptopArt />
+          {model.endsWith('-W') && <Waves x={52} y={10} s={0.5} />}
+        </g>
+      );
     case 'server':
       return <ServerArt />;
     case 'printer':
@@ -238,7 +330,8 @@ function shortName(n: string) {
 
 /** Front view of a device with every port and its link LED. */
 export function DevicePanel({ dev, onPower, onPort }: { dev: Device; onPower?: () => void; onPort?: (i: Iface) => void }) {
-  const ports = dev.allPorts();
+  // an access point's radio slots are virtual: show only its wired port(s)
+  const ports = dev.allPorts().filter((p) => dev.kind !== 'ap' || mediaOf(p) !== 'wireless');
   const groups: { media: string; items: Iface[] }[] = [];
   for (const p of ports) {
     const m = mediaOf(p);
@@ -292,7 +385,12 @@ export function DevicePanel({ dev, onPower, onPort }: { dev: Device; onPower?: (
           <g key={i.name} transform={`translate(${x} ${y})`} onClick={() => onPort?.(i)} style={{ cursor: onPort ? 'pointer' : 'default' }}>
             <title>{`${i.name}${i.linkId ? ' (connected)' : ''}`}</title>
             <rect x="5" y="-7" width="7" height="3" rx="1" fill={ledColor[st]} />
-            {m === 'serial' ? (
+            {m === 'wireless' ? (
+              <g>
+                <rect x="1" y="0" width="15" height="13" rx="3" fill="#141a20" stroke="#4a5562" />
+                <Waves x={8.5} y={11} s={0.38} />
+              </g>
+            ) : m === 'serial' ? (
               <path d="M-1 0 h20 l-3 12 h-14 z" fill="#141a20" stroke="#4a5562" />
             ) : m === 'fiber' ? (
               <g>
@@ -304,7 +402,7 @@ export function DevicePanel({ dev, onPower, onPort }: { dev: Device; onPower?: (
               <path d="M1 0 h15 v10 h-3 v3 h-9 v-3 h-3 z" fill={m === 'console' || m === 'rs232' ? '#2e6f99' : '#141a20'} stroke="#4a5562" />
             )}
             <text x="8.5" y="25" textAnchor="middle" fill="#9aa6b2" fontSize="8.5" fontFamily="var(--mono)">
-              {m === 'console' ? 'CON' : m === 'rs232' ? 'COM' : (i.name.match(/(\d+)$/)?.[1] ?? '')}
+              {m === 'console' ? 'CON' : m === 'rs232' ? 'COM' : m === 'wireless' ? 'Wi-Fi' : (i.name.match(/(\d+)$/)?.[1] ?? '')}
             </text>
           </g>
         );
@@ -312,7 +410,7 @@ export function DevicePanel({ dev, onPower, onPort }: { dev: Device; onPower?: (
       {groups.map((g, k) => {
         const first = layout.find((l) => l.i === g.items[0])!;
         const prefix = shortName(g.items[0].name).replace(/\d+$/, '');
-        const label = g.media === 'console' ? 'Console' : g.media === 'rs232' ? 'RS-232' : g.media === 'fiber' ? `SFP ${prefix}` : prefix;
+        const label = g.media === 'wireless' ? 'Wireless' : g.media === 'console' ? 'Console' : g.media === 'rs232' ? 'RS-232' : g.media === 'fiber' ? `SFP ${prefix}` : prefix;
         return (
           <text key={k} x={first.x} y={14} fill="#c9d3dd" fontSize="10" fontFamily="var(--font)">
             {label}

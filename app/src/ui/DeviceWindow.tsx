@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { fmtIp, fmtMacDot, maskToPrefix, parseIp, parseMask, classfulMask } from '../engine/addr';
 import type { Device, Iface } from '../engine/engine';
 import { Host } from '../engine/devices/host';
+import { AccessPoint } from '../engine/devices/hub';
+import type { WifiSettings } from '../engine/engine';
 import { Router } from '../engine/devices/router';
 import { Switch } from '../engine/devices/switch';
 import { applyConfig } from '../cli/ios';
@@ -33,7 +35,7 @@ function tabsFor(d: Device): { id: Tab; label: string }[] {
   ];
   if (d instanceof Router || d instanceof Switch) t.push({ id: 'cli', label: 'CLI' });
   if (d.kind === 'server') t.push({ id: 'services', label: 'Services' });
-  if (d instanceof Host && (d.kind === 'pc' || d.kind === 'laptop' || d.kind === 'server')) t.push({ id: 'desktop', label: 'Desktop' });
+  if (d instanceof Host && ['pc', 'laptop', 'server', 'tablet', 'smartphone'].includes(d.kind)) t.push({ id: 'desktop', label: 'Desktop' });
   return t;
 }
 
@@ -117,7 +119,7 @@ function PhysicalTab({ dev }: { dev: Device }) {
           </tr>
         </thead>
         <tbody>
-          {dev.allPorts().map((i) => {
+          {dev.allPorts().filter((i) => !(dev.kind === 'ap' && i.media === 'wireless')).map((i) => {
             const peer = engine.peer(dev.id, i.name);
             const pd = peer && engine.devices.get(peer.dev);
             const mgmt = i.media === 'console' || i.media === 'rs232';
@@ -126,7 +128,7 @@ function PhysicalTab({ dev }: { dev: Device }) {
             return (
               <tr key={i.name}>
                 <td>{i.name}</td>
-                <td className="muted">{i.media === 'rs232' ? 'RS-232' : i.media === 'serial' ? `Serial${dce === null ? '' : dce ? ' (DCE)' : ' (DTE)'}` : i.media === 'fiber' ? 'Fiber' : i.media === 'console' ? 'Console' : `${i.speed >= 1000 ? 'Gigabit' : i.speed >= 100 ? 'Fast' : ''} Ethernet`.trim()}</td>
+                <td className="muted">{i.media === 'rs232' ? 'RS-232' : i.media === 'serial' ? `Serial${dce === null ? '' : dce ? ' (DCE)' : ' (DTE)'}` : i.media === 'fiber' ? 'Fiber' : i.media === 'console' ? 'Console' : i.media === 'wireless' ? 'Wireless' : `${i.speed >= 1000 ? 'Gigabit' : i.speed >= 100 ? 'Fast' : ''} Ethernet`.trim()}</td>
                 <td>
                   {mgmt ? (
                     i.linkId ? 'Console cable' : 'Empty'
@@ -508,7 +510,16 @@ function HostConfigTab({ dev }: { dev: Host }) {
           Apply
         </button>
       </Field>
-      <h3>FastEthernet0</h3>
+      {dev.wifi && (
+        <>
+          <h3>Wireless</h3>
+          <WifiForm wifi={dev.wifi} onSave={(w) => dev.setWifi(w)} />
+          <p className="muted small">
+            {dev.nic.linkId ? `Connected to ${engine.devices.get(engine.peer(dev.id, dev.nicName)?.dev ?? '')?.hostname ?? 'an access point'}.` : 'Not connected. It joins the nearest access point with the same SSID and key.'}
+          </p>
+        </>
+      )}
+      <h3>{dev.nicName}</h3>
       <IpConfigForm dev={dev} />
     </div>
   );
@@ -533,8 +544,56 @@ function NameOnlyConfig({ dev }: { dev: Device }) {
           Apply
         </button>
       </Field>
-      <p className="muted small">A hub has nothing to configure. It repeats every frame it receives out of all its other ports.</p>
+      {dev instanceof AccessPoint ? (
+        <>
+          <h3>Wireless</h3>
+          <WifiForm wifi={dev.wifi} onSave={(w) => dev.setWifi(w)} />
+          <p className="muted small">
+            {dev.clients().length ? `Clients: ${dev.clients().join(', ')}` : 'No clients yet. Wireless PCs, laptops, tablets and phones with this SSID and key join automatically.'}
+          </p>
+        </>
+      ) : (
+        <p className="muted small">A hub has nothing to configure. It repeats every frame it receives out of all its other ports.</p>
+      )}
     </div>
+  );
+}
+
+function WifiForm({ wifi, onSave }: { wifi: WifiSettings; onSave: (w: WifiSettings) => void }) {
+  const [ssid, setSsid] = useState(wifi.ssid);
+  const [secure, setSecure] = useState(!!wifi.key);
+  const [key, setKey] = useState(wifi.key ?? '');
+  const bad = !ssid.trim() || (secure && key.length < 8);
+  const same = ssid === wifi.ssid && (secure ? key : '') === (wifi.key ?? '');
+  return (
+    <>
+      <Field label="SSID">
+        <input value={ssid} onChange={(e) => setSsid(e.target.value)} maxLength={32} aria-label="SSID" />
+      </Field>
+      <Field label="Security">
+        <select value={secure ? 'wpa2' : 'open'} onChange={(e) => setSecure(e.target.value === 'wpa2')} aria-label="Security">
+          <option value="open">Open</option>
+          <option value="wpa2">WPA2-PSK</option>
+        </select>
+      </Field>
+      {secure && (
+        <Field label="Passphrase">
+          <input value={key} onChange={(e) => setKey(e.target.value)} placeholder="8 characters or more" aria-label="Passphrase" />
+        </Field>
+      )}
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
+        <button
+          className="btn primary"
+          disabled={bad || same}
+          onClick={() => {
+            onSave({ ssid: ssid.trim(), key: secure ? key : undefined });
+            markDirty();
+          }}
+        >
+          Save wireless settings
+        </button>
+      </div>
+    </>
   );
 }
 

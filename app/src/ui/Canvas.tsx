@@ -417,7 +417,7 @@ export function Canvas() {
                     </g>
                   );
                 })()}
-                {showLabels && (
+                {showLabels && l.cable !== 'wireless' && (
                   <>
                     <text x={a.x + ux * labA + px} y={a.y + uy * labA + py + 3.5} className="port-label">
                       {shortIf(l.a.iface)}

@@ -65,6 +65,7 @@ export interface UiState {
   inspectMenu: { devId: string; x: number; y: number } | null;
   ask: { text: string; ok: string; resolve: (v: boolean) => void } | null;
   aiOpen: boolean;
+  importReport: { name: string; version: string; devices: number; links: number; warnings: string[] } | null;
 }
 
 let state: UiState = {
@@ -97,6 +98,7 @@ let state: UiState = {
   inspectMenu: null,
   ask: null,
   aiOpen: false,
+  importReport: null,
 };
 
 const subs = new Set<() => void>();
@@ -136,7 +138,7 @@ export function openWindow(devId: string, tab?: Tab) {
     if (existing) return { topZ: z, wins: s.wins.map((w) => (w.devId === devId ? { ...w, z, tab: tab ?? w.tab } : w)) };
     const d = engine.devices.get(devId);
     const defTab: Tab =
-      tab ?? (!d ? 'physical' : d.kind === 'router' || d.kind === 'switch' || d.kind === 'l3switch' ? 'cli' : d.kind === 'pc' || d.kind === 'laptop' || d.kind === 'server' ? 'desktop' : d.kind === 'hub' ? 'physical' : 'config');
+      tab ?? (!d ? 'physical' : d.kind === 'router' || d.kind === 'switch' || d.kind === 'l3switch' ? 'cli' : d.kind === 'pc' || d.kind === 'laptop' || d.kind === 'server' || d.kind === 'tablet' || d.kind === 'smartphone' ? 'desktop' : d.kind === 'hub' ? 'physical' : 'config');
     const n = s.wins.length;
     return { topZ: z, wins: [...s.wins, { devId, tab: defTab, x: 120 + n * 28, y: 70 + n * 28, z }] };
   });

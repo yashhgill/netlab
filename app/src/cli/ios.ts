@@ -892,6 +892,11 @@ export function applyConfig(dev: IosDevice, lines: string[]): string {
   return s.buffer;
 }
 
+/** copy running-config startup-config, without a terminal. */
+export function saveStartup(dev: IosDevice) {
+  new IosSession(dev, false).saveConfig();
+}
+
 /** Restore a router/switch to its startup-config (or factory defaults). */
 export function reloadDevice(dev: IosDevice) {
   const snap = dev.ios.startupSnapshot as Record<string, any> | undefined;

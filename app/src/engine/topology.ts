@@ -1,6 +1,6 @@
 import { Engine, uid, type CableType, type Device, type DeviceKind } from './engine';
 import { Host, type HostKind } from './devices/host';
-import { Hub } from './devices/hub';
+import { AccessPoint, Hub } from './devices/hub';
 import { Router } from './devices/router';
 import { Switch } from './devices/switch';
 
@@ -17,6 +17,10 @@ const baseNames: Record<DeviceKind, string> = {
   hub: 'Hub',
   printer: 'Printer',
   phone: 'IPPhone',
+  tablet: 'Tablet',
+  smartphone: 'Smartphone',
+  tv: 'TV',
+  ap: 'AccessPoint',
 };
 
 export function nextName(engine: Engine, kind: DeviceKind): string {
@@ -32,6 +36,7 @@ export function createDevice(engine: Engine, kind: DeviceKind, x: number, y: num
   if (kind === 'switch' || kind === 'l3switch') d = new Switch(id, name, model ?? (kind === 'l3switch' ? 'NL-S3600' : undefined));
   else if (kind === 'router') d = new Router(id, name, model);
   else if (kind === 'hub') d = new Hub(id, name, model);
+  else if (kind === 'ap') d = new AccessPoint(id, name, model);
   else d = new Host(id, kind as HostKind, name, model);
   d.x = x;
   d.y = y;
@@ -59,14 +64,15 @@ export function serialize(engine: Engine, notes: Note[] = []): SavedFile {
     format: FILE_FORMAT,
     version: FILE_VERSION,
     devices: [...engine.devices.values()].map((d) => d.toJSON()),
-    links: [...engine.links.values()].map((l) => ({ id: l.id, a: l.a, b: l.b, cable: l.cable, dce: l.dce })),
+    // wireless associations are rebuilt from SSID settings when a file is opened
+    links: [...engine.links.values()].filter((l) => l.cable !== 'wireless').map((l) => ({ id: l.id, a: l.a, b: l.b, cable: l.cable, dce: l.dce })),
     notes,
   };
 }
 
 export function deviceFromJSON(j: Record<string, any>): Device {
   if (j.type === 'switch' || j.type === 'l3switch') return Switch.fromJSON(j);
-  if (j.type === 'hub') return Hub.fromJSON(j);
+  if (j.type === 'hub' || j.type === 'ap') return Hub.fromJSON(j);
   if (j.type === 'router') return Router.fromJSON(j);
   return Host.fromJSON(j);
 }

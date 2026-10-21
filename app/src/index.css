@@ -639,8 +639,9 @@ kbd {
 }
 
 .dock-subs {
-  display: flex;
-  gap: 4px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px 4px;
   border-top: 1px solid var(--line);
   padding-top: 6px;
 }
@@ -2310,6 +2311,7 @@ h3 {
     padding: 3px 6px;
   }
   .dock-subs {
+    display: flex;
     border-top: 0;
     padding-top: 0;
     border-left: 1px solid var(--line);
@@ -2451,3 +2453,14 @@ h3 {
     display: none;
   }
 }
+
+.import-warnings {
+  margin: 0 0 12px;
+  padding-left: 18px;
+  max-height: 220px;
+  overflow: auto;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text-2, inherit);
+}
+.import-warnings li + li { margin-top: 3px; }

@@ -26,6 +26,17 @@ An open-source network simulator for the browser and the desktop. Build a topolo
 
 Not yet: dynamic routing protocols (RIP, OSPF), STP, ACLs, NAT and wireless. Contributions are welcome.
 
+## Opening Packet Tracer files
+
+File > Open (or drag a file onto the window) accepts Packet Tracer `.pkt`, `.pka` and `.pkz` files from version 5 onward. NetLab decrypts the file (the format was documented by the open-source [pka2xml](https://github.com/mircodz/pka2xml) project; `app/src/pt/pkt-crypto.ts` is an independent implementation), reads the network XML and rebuilds it with the closest NetLab models:
+
+- devices, positions, names and power state; generic and modular devices get the extra ports their modules add;
+- cables, including which serial end is DCE;
+- router and switch running-configs (and startup-configs), with type 7 passwords decoded;
+- host addressing, DHCP, gateways and DNS; server DHCP pools; access point and client SSIDs and WPA2 keys; notes.
+
+Devices NetLab doesn't simulate yet (clouds, modems, home routers, wireless LAN controllers) and settings it can't recover (hashed enable secrets) are listed after the file opens. Saving as `.pkt` isn't supported; use File > Export device configs to take configurations back the other way.
+
 ## Project layout
 
 ```

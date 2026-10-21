@@ -17,11 +17,7 @@ export class Router extends Device {
     super(id, hostname);
     const spec = modelSpec(model, 'router');
     this.model = spec.id;
-    for (const p of spec.ports) {
-      const i: Iface = { name: p.name, mac: newMac(), adminUp: false, physical: true, speed: p.speed, media: p.media };
-      if (p.media === 'serial') i.encap = 'hdlc';
-      this.ifaces.set(p.name, i);
-    }
+    for (const p of spec.ports) this.addPort(p.name, p.speed, p.media);
     for (const m of spec.mgmt) this.mgmt.set(m.name, { name: m.name, mac: '000000000000', adminUp: true, physical: true, speed: m.speed, media: m.media });
     this.stack = new IpStack(
       { dev: this, l3ifs: () => this.l3ifs(), l2send: (n, f) => this.l2send(n, f) },
@@ -29,6 +25,13 @@ export class Router extends Device {
     );
     this.dhcp = new DhcpServer(this.stack);
     this.dhcp.helperFor = (n) => this.ifaces.get(n)?.helper;
+  }
+
+  /** Add a physical port (used when a module is installed or a file needs one). */
+  addPort(name: string, speed: number, media: Iface['media']) {
+    const i: Iface = { name, mac: newMac(), adminUp: false, physical: true, speed, media };
+    if (media === 'serial') i.encap = 'hdlc';
+    this.ifaces.set(name, i);
   }
 
   addSubif(name: string): Iface | null {

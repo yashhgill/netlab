@@ -22,7 +22,7 @@ export interface ActionResult {
   errors?: string[];
 }
 
-const KINDS: DeviceKind[] = ['router', 'switch', 'l3switch', 'hub', 'pc', 'laptop', 'server', 'printer', 'phone'];
+const KINDS: DeviceKind[] = ['router', 'switch', 'l3switch', 'hub', 'ap', 'pc', 'laptop', 'server', 'printer', 'phone', 'tablet', 'smartphone', 'tv'];
 
 export function describeAction(a: AiAction): string {
   switch (a.type) {

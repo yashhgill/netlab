@@ -2,7 +2,11 @@ import { useEffect } from 'react';
 import { EXAMPLES } from '../examples';
 import { Engine } from '../engine/engine';
 import { serialize } from '../engine/topology';
-import { isDesktop, openText, saveText } from '../platform';
+import { isDesktop, openFile, saveText } from '../platform';
+import { unzipSync } from 'fflate';
+import { runningConfig } from '../cli/ios-show';
+import { Router } from '../engine/devices/router';
+import { Switch } from '../engine/devices/switch';
 import { currentFile, deleteSelected, newTopology, openTopology } from './actions';
 import { canvasApi } from './Canvas';
 import { UiIcon } from './icons';
@@ -17,16 +21,58 @@ export async function doSave() {
   }
 }
 
-export async function doOpen() {
-  if (getState().dirty && !(await askConfirm('This topology has unsaved changes. Discard them?'))) return;
-  const f = await openText();
-  if (!f) return;
+/** Open file bytes: a NetLab topology, or a Packet Tracer file. */
+export async function openBytes(name: string, bytes: Uint8Array) {
+  if (/\.(pkt|pka|pkz)$/i.test(name)) {
+    try {
+      let data = bytes;
+      let inner = name;
+      if (/\.pkz$/i.test(name)) {
+        // .pkz is a zip holding the .pkt/.pka and its images
+        const files = unzipSync(bytes);
+        const key = Object.keys(files).find((k) => /\.(pkt|pka)$/i.test(k));
+        if (!key) throw new Error('No Packet Tracer file inside this .pkz.');
+        data = files[key];
+        inner = key;
+      }
+      const { importPacketTracer } = await import('../pt/import');
+      const r = importPacketTracer(data);
+      const base = inner.split('/').pop()!.replace(/\.(pkt|pka)$/i, '');
+      openTopology(r.file, base);
+      setState({ dirty: true, importReport: { name: inner.split('/').pop()!, version: r.version, devices: r.devices, links: r.links, warnings: r.warnings } });
+      setTimeout(() => canvasApi.fit(), 50);
+    } catch (e) {
+      toast(`${name} could not be opened: ${(e as Error).message}`, 'error');
+    }
+    return;
+  }
   try {
-    openTopology(JSON.parse(f.text), f.name);
+    openTopology(JSON.parse(new TextDecoder().decode(bytes)), name);
     setTimeout(() => canvasApi.fit(), 50);
   } catch {
-    toast(`${f.name} could not be opened. It isn't a NetLab topology file.`, 'error');
+    toast(`${name} could not be opened. Open a NetLab .nlab file or a Packet Tracer .pkt, .pka or .pkz file.`, 'error');
   }
+}
+
+export async function doOpen() {
+  if (getState().dirty && !(await askConfirm('This topology has unsaved changes. Discard them?'))) return;
+  const f = await openFile();
+  if (!f) return;
+  await openBytes(f.name, f.bytes);
+}
+
+/** Every router and switch configuration in one text file, ready to paste into a real or simulated device. */
+export async function doExportConfigs() {
+  const parts: string[] = [];
+  for (const d of engine.devices.values()) {
+    if (!(d instanceof Router || d instanceof Switch)) continue;
+    parts.push(`! ==================== ${d.hostname} (${d.model})\n${runningConfig(d)}`);
+  }
+  if (!parts.length) {
+    toast('There are no routers or switches to export.', 'error');
+    return;
+  }
+  await saveText(`${getState().fileName}-configs.txt`, parts.join('\n\n'));
 }
 
 export async function doNew() {
@@ -145,6 +191,7 @@ export function TopBar() {
                     {item('New topology', doNew)}
                     {item('Open…', doOpen, `${modKey}O`)}
                     {item('Save', doSave, `${modKey}S`)}
+                    {item('Export device configs (.txt)', doExportConfigs)}
                     <div className="menu-sep" />
                     <div className="menu-label">Example labs</div>
                     {EXAMPLES.map((ex) => (
@@ -185,7 +232,7 @@ export function TopBar() {
         <button className="tool" onClick={doNew} title="New topology">
           <UiIcon.newFile />
         </button>
-        <button className="tool" onClick={doOpen} title="Open (Ctrl+O)">
+        <button className="tool" onClick={doOpen} title="Open a NetLab or Packet Tracer file (Ctrl+O)">
           <UiIcon.folder />
         </button>
         <button className="tool" onClick={doSave} title="Save (Ctrl+S)">

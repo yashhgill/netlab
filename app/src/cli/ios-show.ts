@@ -116,7 +116,7 @@ export function showVlanBrief(s: Switch): string {
   let out = '\nVLAN Name                             Status    Ports\n---- -------------------------------- --------- -------------------------------\n';
   const ids = [...s.vlans.keys()].sort((a, b) => a - b);
   for (const v of ids) {
-    const ports = s.physicalIfaces().filter((p) => p.swMode !== 'trunk' && p.accessVlan === v).map((p) => shortIf(p.name));
+    const ports = s.physicalIfaces().filter((p) => !p.routed && s.opMode(p) !== 'trunk' && p.accessVlan === v).map((p) => shortIf(p.name));
     const lines: string[] = [];
     for (let i = 0; i < ports.length; i += 4) lines.push(ports.slice(i, i + 4).join(', ') + (i + 4 < ports.length ? ',' : ''));
     out += `${String(v).padEnd(5)}${s.vlans.get(v)!.padEnd(33)}active    ${lines[0] ?? ''}\n`;
@@ -127,7 +127,7 @@ export function showVlanBrief(s: Switch): string {
 }
 
 export function showTrunk(s: Switch): string {
-  const trunks = s.physicalIfaces().filter((p) => p.swMode === 'trunk' && s.lineUp(p.name));
+  const trunks = s.physicalIfaces().filter((p) => !p.routed && s.opMode(p) === 'trunk' && s.lineUp(p.name));
   if (!trunks.length) return '';
   let out = 'Port        Mode         Encapsulation  Status        Native vlan\n';
   for (const t of trunks) out += `${shortIf(t.name, true).padEnd(12)}on           802.1q         trunking      ${t.nativeVlan ?? 1}\n`;

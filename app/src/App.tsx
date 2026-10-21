@@ -4,7 +4,7 @@ import { Canvas, canvasApi } from './ui/Canvas';
 import { DeviceWindows } from './ui/DeviceWindow';
 import { Dock } from './ui/Dock';
 import { PduDetail, SimPanel } from './ui/SimPanel';
-import { loadExample, ToolPalette, TopBar } from './ui/TopBar';
+import { loadExample, openBytes, ToolPalette, TopBar } from './ui/TopBar';
 import { InspectMenu, InspectWindows } from './ui/Inspect';
 import { UiIcon } from './ui/icons';
 import { engine, getState, setState, useUi } from './ui/store';
@@ -72,9 +72,24 @@ export default function App() {
       if (getState().dirty && !isDesktop) e.preventDefault();
     };
     window.addEventListener('beforeunload', warn);
+    // drop a .nlab / .pkt / .pka / .pkz file anywhere to open it
+    const over = (e: DragEvent) => {
+      if (e.dataTransfer?.types.includes('Files')) e.preventDefault();
+    };
+    const drop = async (e: DragEvent) => {
+      const f = e.dataTransfer?.files?.[0];
+      if (!f) return;
+      e.preventDefault();
+      if (getState().dirty && !window.confirm('This topology has unsaved changes. Discard them?')) return;
+      await openBytes(f.name, new Uint8Array(await f.arrayBuffer()));
+    };
+    window.addEventListener('dragover', over);
+    window.addEventListener('drop', drop);
     return () => {
       window.removeEventListener('pointerdown', close);
       window.removeEventListener('beforeunload', warn);
+      window.removeEventListener('dragover', over);
+      window.removeEventListener('drop', drop);
     };
   }, []);
 
@@ -102,6 +117,7 @@ export default function App() {
       )}
       {dialog && <Dialog kind={dialog} />}
       <AskDialog />
+      <ImportReport />
     </div>
   );
 }
@@ -121,7 +137,7 @@ function Dialog({ kind }: { kind: 'about' | 'shortcuts' | 'new' }) {
           <div className="about">
             <p>An open-source network simulator for learning switching, routing and the IOS-style command line. Build a topology, configure it, and watch every frame move in simulation mode.</p>
             <p className="muted small">Version 1.0. Made by HarNova Technology. NetLab is an independent project and is not affiliated with or endorsed by any network equipment vendor.</p>
-            <p className="muted small">Supported today: 4 router models with Gigabit, serial and fiber ports; 4 switch models including a multilayer switch; hubs; PCs, laptops, servers, printers and IP phones; straight-through, cross-over, fiber, serial DCE/DTE and console cables. Ethernet switching, VLANs and 802.1Q trunks, router-on-a-stick, inter-VLAN routing on SVIs and routed ports, serial links with clock rate and HDLC/PPP, static routing, ARP, ICMP ping and traceroute, DHCP server and relay, CDP neighbors, IOS passwords, banners and startup-config.</p>
+            <p className="muted small">Supported today: 8 router models with Fast Ethernet, Gigabit, serial and fiber ports; 7 switch models including two multilayer switches; hubs and repeaters; wireless access points; PCs, laptops, servers, printers, IP phones, tablets, smartphones and TVs, wired or Wi-Fi; straight-through, cross-over, fiber, serial DCE/DTE, console and wireless connections. Opens Packet Tracer .pkt, .pka and .pkz files. Ethernet switching, VLANs and 802.1Q trunks, router-on-a-stick, inter-VLAN routing on SVIs and routed ports, serial links with clock rate and HDLC/PPP, static routing, ARP, ICMP ping and traceroute, DHCP server and relay, CDP neighbors, IOS passwords, banners and startup-config.</p>
           </div>
         ) : (
           <table className="grid-table compact shortcuts">
@@ -175,6 +191,47 @@ function AskDialog() {
           </button>
           <button className="btn primary" onClick={() => done(true)}>
             {ask.ok}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ImportReport() {
+  const r = useUi((s) => s.importReport);
+  if (!r) return null;
+  const close = () => setState({ importReport: null });
+  return (
+    <div className="modal-back" onPointerDown={close}>
+      <div className="modal" role="dialog" aria-label="Packet Tracer import" onPointerDown={(e) => e.stopPropagation()}>
+        <div className="modal-head">
+          <h2>Opened {r.name}</h2>
+          <button className="icon-btn" onClick={close} aria-label="Close">
+            <UiIcon.close />
+          </button>
+        </div>
+        <p style={{ marginTop: 0 }}>
+          Imported {r.devices} device{r.devices === 1 ? '' : 's'} and {r.links} cable{r.links === 1 ? '' : 's'}
+          {r.version ? ` from a Packet Tracer ${r.version} file` : ''}, with router and switch configurations, addressing and wireless settings.
+        </p>
+        {r.warnings.length > 0 && (
+          <>
+            <p className="muted small" style={{ marginBottom: 6 }}>
+              Worth checking:
+            </p>
+            <ul className="import-warnings">
+              {r.warnings.slice(0, 30).map((w) => (
+                <li key={w}>{w}</li>
+              ))}
+              {r.warnings.length > 30 && <li>…and {r.warnings.length - 30} more.</li>}
+            </ul>
+          </>
+        )}
+        <p className="muted small">Save with Ctrl/⌘ + S to keep it as a NetLab file. Routing protocols and some features from the original lab may not be simulated yet.</p>
+        <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+          <button className="btn primary" onClick={close} autoFocus>
+            Start working
           </button>
         </div>
       </div>

@@ -1,8 +1,8 @@
 import { cloneFrame, describeFrame, pduKind, type Frame, type PduKind } from './packets';
 
-export type DeviceKind = 'pc' | 'laptop' | 'server' | 'printer' | 'phone' | 'switch' | 'l3switch' | 'hub' | 'router';
-export type CableType = 'straight' | 'cross' | 'auto' | 'fiber' | 'serial-dce' | 'serial-dte' | 'console';
-export type Media = 'copper' | 'fiber' | 'serial' | 'console' | 'rs232';
+export type DeviceKind = 'pc' | 'laptop' | 'server' | 'printer' | 'phone' | 'tablet' | 'smartphone' | 'tv' | 'switch' | 'l3switch' | 'hub' | 'ap' | 'router';
+export type CableType = 'straight' | 'cross' | 'auto' | 'fiber' | 'serial-dce' | 'serial-dte' | 'console' | 'wireless';
+export type Media = 'copper' | 'fiber' | 'serial' | 'console' | 'rs232' | 'wireless';
 
 export interface Iface {
   name: string;
@@ -34,6 +34,12 @@ export interface Iface {
   sviVlan?: number;
   helper?: number;
   linkId?: string;
+}
+
+export interface WifiSettings {
+  ssid: string;
+  /** WPA2-PSK passphrase; empty or undefined means an open network. */
+  key?: string;
 }
 
 export interface LinkEnd {
@@ -185,6 +191,7 @@ export function cableFor(a: Device, ia: Iface, b: Device, ib: Iface): CableType 
   const mb = mediaOf(ib);
   if ((ma === 'console' && mb === 'rs232') || (ma === 'rs232' && mb === 'console')) return 'console';
   if (ma !== mb) return null;
+  if (ma === 'wireless') return 'wireless';
   if (ma === 'fiber') return 'fiber';
   if (ma === 'serial') return 'serial-dce';
   if (ma === 'copper') return deviceGroup(a.kind) === deviceGroup(b.kind) ? 'cross' : 'straight';
@@ -199,6 +206,7 @@ export const CABLE_LABEL: Record<CableType, string> = {
   'serial-dce': 'Serial DCE',
   'serial-dte': 'Serial DTE',
   console: 'Console',
+  wireless: 'Wireless',
 };
 
 export class Engine {
@@ -216,6 +224,67 @@ export class Engine {
 
   bump() {
     this.version++;
+    this.syncWireless();
+  }
+
+  private syncing = false;
+  private wifiSig = '';
+
+  /**
+   * Wireless association: every powered wireless client joins the nearest
+   * powered access point whose SSID and key match its own settings.
+   * Associations are kept as ordinary links with the 'wireless' cable.
+   */
+  syncWireless() {
+    if (this.syncing) return;
+    const aps: Device[] = [];
+    const clients: Device[] = [];
+    for (const d of this.devices.values()) {
+      const w = (d as unknown as { wifi?: WifiSettings }).wifi;
+      if (!w) continue;
+      if (d.kind === 'ap') aps.push(d);
+      else clients.push(d);
+    }
+    if (!clients.length && !aps.length) return;
+    const sig = [...aps, ...clients]
+      .map((d) => {
+        const w = (d as unknown as { wifi: WifiSettings }).wifi;
+        const linked = [...d.ifaces.values()].filter((i) => i.media === 'wireless' && i.linkId).length;
+        return `${d.id}:${d.powered ? 1 : 0}:${w.ssid}:${w.key ?? ''}:${Math.round(d.x / 20)}:${Math.round(d.y / 20)}:${linked}`;
+      })
+      .join('|');
+    if (sig === this.wifiSig) return;
+    this.syncing = true;
+    try {
+      this.wifiSig = sig;
+      for (const c of clients) {
+        const cw = (c as unknown as { wifi: WifiSettings }).wifi;
+        const nic = [...c.ifaces.values()].find((i) => i.media === 'wireless');
+        if (!nic) continue;
+        let best: Device | null = null;
+        let bestD = Infinity;
+        if (c.powered && cw.ssid)
+          for (const ap of aps) {
+            const aw = (ap as unknown as { wifi: WifiSettings }).wifi;
+            if (!ap.powered || aw.ssid !== cw.ssid || (aw.key ?? '') !== (cw.key ?? '')) continue;
+            const dist = Math.hypot(ap.x - c.x, ap.y - c.y);
+            if (dist < bestD) {
+              bestD = dist;
+              best = ap;
+            }
+          }
+        const cur = nic.linkId ? this.links.get(nic.linkId) : undefined;
+        const curAp = cur ? (cur.a.dev === c.id ? cur.b.dev : cur.a.dev) : null;
+        if (curAp === (best?.id ?? null)) continue;
+        if (cur) this.disconnect(cur.id);
+        if (best) {
+          const slot = [...best.ifaces.values()].find((i) => i.media === 'wireless' && !i.linkId);
+          if (slot) this.connect({ dev: best.id, iface: slot.name }, { dev: c.id, iface: nic.name }, 'wireless');
+        }
+      }
+    } finally {
+      this.syncing = false;
+    }
   }
 
   // ---------- topology ----------
@@ -229,7 +298,12 @@ export class Engine {
   removeDevice(id: string) {
     const d = this.devices.get(id);
     if (!d) return;
-    for (const l of [...this.links.values()]) if (l.a.dev === id || l.b.dev === id) this.disconnect(l.id);
+    this.syncing = true;
+    try {
+      for (const l of [...this.links.values()]) if (l.a.dev === id || l.b.dev === id) this.disconnect(l.id);
+    } finally {
+      this.syncing = false;
+    }
     this.devices.delete(id);
     this.bump();
   }
@@ -244,6 +318,7 @@ export class Engine {
     if (!ia || !ib) return 'Port not found';
     if (ia.linkId || ib.linkId) return 'That port is already in use';
     const need = cableFor(da, ia, db, ib);
+    if (need === 'wireless' && cable !== 'wireless') return 'Wireless devices join an access point by its SSID. Set the SSID in the device Config tab.';
     if (!need) return `A cable can't join ${a.iface} (${mediaOf(ia)}) to ${b.iface} (${mediaOf(ib)}).`;
     let type = cable;
     if (cable === 'auto') type = need;
@@ -273,7 +348,7 @@ export class Engine {
   }
 
   cableOk(l: Link): boolean {
-    if (l.cable === 'auto' || l.cable === 'fiber' || l.cable === 'console' || l.cable.startsWith('serial')) return true;
+    if (l.cable === 'auto' || l.cable === 'wireless' || l.cable === 'fiber' || l.cable === 'console' || l.cable.startsWith('serial')) return true;
     const ka = this.devices.get(l.a.dev)!.kind;
     const kb = this.devices.get(l.b.dev)!.kind;
     const same = deviceGroup(ka) === deviceGroup(kb);

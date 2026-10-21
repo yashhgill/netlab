@@ -51,7 +51,7 @@ export class Switch extends Device {
     this.stack.forwarding = this.ipRouting;
   }
 
-  private addPort(name: string, speed: number, media: Iface['media']) {
+  addPort(name: string, speed: number, media: Iface['media']) {
     this.ifaces.set(name, {
       name,
       mac: newMac(),
@@ -93,9 +93,24 @@ export class Switch extends Device {
     return this.physicalIfaces().some((p) => !p.routed && this.carries(p, v) && this.lineUp(p.name));
   }
 
+  /**
+   * Operational switchport mode. A port left in its default (dynamic) mode
+   * becomes a trunk when the switch at the other end is set to trunk, like DTP.
+   */
+  opMode(p: Iface): 'access' | 'trunk' {
+    if (p.swModeSet || p.swMode === 'trunk') return p.swMode ?? 'access';
+    const peer = this.engine?.peer(this.id, p.name);
+    const pd = peer && this.engine.devices.get(peer.dev);
+    if (peer && pd instanceof Switch) {
+      const pi = pd.ifaces.get(peer.iface);
+      if (pi && !pi.routed && pi.swModeSet && pi.swMode === 'trunk') return 'trunk';
+    }
+    return 'access';
+  }
+
   carries(p: Iface, vlan: number): boolean {
     if (p.routed) return false;
-    if (p.swMode === 'trunk') return (p.allowedVlans === null || !!p.allowedVlans?.includes(vlan)) && this.vlans.has(vlan);
+    if (this.opMode(p) === 'trunk') return (p.allowedVlans === null || !!p.allowedVlans?.includes(vlan)) && this.vlans.has(vlan);
     return p.accessVlan === vlan;
   }
 
@@ -109,7 +124,7 @@ export class Switch extends Device {
       return;
     }
     let vlan: number;
-    if (p.swMode === 'trunk') {
+    if (this.opMode(p) === 'trunk') {
       vlan = frame.vlan ?? p.nativeVlan ?? 1;
       if (!(p.allowedVlans === null || p.allowedVlans?.includes(vlan))) {
         this.drop(frame, `VLAN ${vlan} not allowed on trunk ${inPort}`);
@@ -165,7 +180,7 @@ export class Switch extends Device {
   private egress(port: string, vlan: number, f: Frame) {
     const p = this.ifaces.get(port)!;
     const out: Frame = { ...f };
-    if (p.swMode === 'trunk' && vlan !== (p.nativeVlan ?? 1)) out.vlan = vlan;
+    if (this.opMode(p) === 'trunk' && vlan !== (p.nativeVlan ?? 1)) out.vlan = vlan;
     else delete out.vlan;
     this.sendFrame(port, out);
   }
