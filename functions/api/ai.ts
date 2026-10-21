@@ -152,7 +152,15 @@ async function groq(env: Env, messages: Msg[], extra: Record<string, unknown>, b
       if (!(e instanceof RateLimited)) throw e;
       const m = e.message.match(/try again in (?:(\d+)m)?([\d.]+)s/i);
       const wait = m ? (Number(m[1] ?? 0) * 60 + Number(m[2])) * 1000 + 300 : 8000;
-      if (budget.waited + wait > MAX_RATE_WAIT_MS) throw new Error('The AI is busy right now. Please try again in a minute.');
+      if (budget.waited + wait > MAX_RATE_WAIT_MS) {
+        const n = e.message.match(/Limit (\d+), Used (\d+), Requested (\d+)/);
+        const big = n && Number(n[3]) > Number(n[1]);
+        throw new Error(
+          big
+            ? `The AI is busy right now: this request needs ${n![3]} tokens but the AI plan allows ${n![1]} per minute. Try a shorter question.`
+            : `The AI is busy right now. Please try again in a minute.${n ? ` (${n[2]} of ${n[1]} tokens used this minute)` : ''}`,
+        );
+      }
       budget.waited += wait;
       await new Promise((r) => setTimeout(r, wait));
     }
