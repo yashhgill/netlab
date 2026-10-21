@@ -4,7 +4,7 @@ import { Canvas, canvasApi } from './ui/Canvas';
 import { DeviceWindows } from './ui/DeviceWindow';
 import { Dock } from './ui/Dock';
 import { PduDetail, SimPanel } from './ui/SimPanel';
-import { loadExample, openBytes, ToolPalette, TopBar } from './ui/TopBar';
+import { openBytes, ToolPalette, TopBar } from './ui/TopBar';
 import { InspectMenu, InspectWindows } from './ui/Inspect';
 import { UiIcon } from './ui/icons';
 import { engine, getState, setState, useUi } from './ui/store';
@@ -60,11 +60,7 @@ export default function App() {
   const sim = engine.mode === 'simulation';
 
   useEffect(() => {
-    const params = new URLSearchParams(location.search);
-    const ex = params.get('example');
-    if (ex) loadExample(ex);
-    else if (restoreAutosave()) setTimeout(() => canvasApi.fit(), 60);
-    else if (import.meta.env.VITE_FIRST_EXAMPLE) loadExample(import.meta.env.VITE_FIRST_EXAMPLE);
+    if (restoreAutosave()) setTimeout(() => canvasApi.fit(), 60);
     const close = () => setState({ menu: null });
     window.addEventListener('pointerdown', close);
     const warn = (e: BeforeUnloadEvent) => {

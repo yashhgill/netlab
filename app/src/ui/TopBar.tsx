@@ -1,7 +1,4 @@
 import { useEffect } from 'react';
-import { EXAMPLES } from '../examples';
-import { Engine } from '../engine/engine';
-import { serialize } from '../engine/topology';
 import { isDesktop, openFile, saveText } from '../platform';
 import { unzipSync } from 'fflate';
 import { runningConfig } from '../cli/ios-show';
@@ -78,19 +75,6 @@ export async function doExportConfigs() {
 export async function doNew() {
   if (getState().dirty && !(await askConfirm('This topology has unsaved changes. Discard them?'))) return;
   newTopology();
-}
-
-export async function loadExample(id: string) {
-  const ex = EXAMPLES.find((x) => x.id === id);
-  if (!ex) return;
-  if (getState().dirty && !(await askConfirm('This topology has unsaved changes. Discard them?'))) return;
-  // build in a scratch engine, then load through the normal file path so ids/notes are consistent
-  const scratch = new Engine();
-  const notes = ex.build(scratch);
-  scratch.runFor(8000);
-  openTopology(serialize(scratch, notes), ex.title);
-  setState({ dirty: false });
-  setTimeout(() => canvasApi.fit(), 50);
 }
 
 export const TOOLS: { id: Tool; label: string; key: string; icon: () => React.ReactElement }[] = [
@@ -192,14 +176,6 @@ export function TopBar() {
                     {item('Open…', doOpen, `${modKey}O`)}
                     {item('Save', doSave, `${modKey}S`)}
                     {item('Export device configs (.txt)', doExportConfigs)}
-                    <div className="menu-sep" />
-                    <div className="menu-label">Example labs</div>
-                    {EXAMPLES.map((ex) => (
-                      <button key={ex.id} role="menuitem" className="menu-example" onClick={() => (setState({ menu: null }), loadExample(ex.id))}>
-                        <span>{ex.title}</span>
-                        <small>{ex.summary}</small>
-                      </button>
-                    ))}
                   </>
                 )}
                 {m === 'Edit' && (

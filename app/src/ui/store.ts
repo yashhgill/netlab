@@ -66,6 +66,39 @@ export interface UiState {
   ask: { text: string; ok: string; resolve: (v: boolean) => void } | null;
   aiOpen: boolean;
   importReport: { name: string; version: string; devices: number; links: number; warnings: string[] } | null;
+  /** Which bottom/side panels are open. Users can minimize each one; remembered per browser. */
+  panels: Panels;
+}
+
+export interface Panels {
+  devices: boolean;
+  pdus: boolean;
+  mode: boolean;
+  sim: boolean;
+}
+
+const PANELS_KEY = 'netlab.panels';
+
+function initialPanels(): Panels {
+  const narrow = typeof window !== 'undefined' && window.innerWidth <= 900;
+  const def: Panels = { devices: true, pdus: !narrow, mode: true, sim: true };
+  try {
+    const saved = JSON.parse(localStorage.getItem(PANELS_KEY) ?? 'null');
+    if (saved && typeof saved === 'object') return { ...def, ...saved };
+  } catch {
+    /* storage unavailable */
+  }
+  return def;
+}
+
+export function togglePanel(k: keyof Panels, open?: boolean) {
+  const panels = { ...state.panels, [k]: open ?? !state.panels[k] };
+  setState({ panels });
+  try {
+    localStorage.setItem(PANELS_KEY, JSON.stringify(panels));
+  } catch {
+    /* storage unavailable */
+  }
 }
 
 let state: UiState = {
@@ -99,6 +132,7 @@ let state: UiState = {
   ask: null,
   aiOpen: false,
   importReport: null,
+  panels: initialPanels(),
 };
 
 const subs = new Set<() => void>();

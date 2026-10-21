@@ -177,6 +177,8 @@ export async function signInWithGoogle(): Promise<string | null> {
 export async function signOut() {
   await supabase?.auth.signOut();
   set({ profile: null, session: null });
+  // the web version goes back to the NetLab home page; the desktop app stays put
+  if (!isDesktop) location.assign('/');
 }
 
 export async function myPayments(): Promise<PaymentRequest[]> {

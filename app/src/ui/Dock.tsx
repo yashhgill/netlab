@@ -1,9 +1,9 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { CABLE_LABEL, type CableType } from '../engine/engine';
 import { MODELS, type Category, type ModelSpec } from '../engine/models';
 import { describeScenario, fastForward, fireScenario, powerCycleAll, removeScenario, setMode } from './actions';
 import { CableSwatch, DeviceGlyph, UiIcon } from './icons';
-import { askConfirm, engine, setState, useUi } from './store';
+import { askConfirm, engine, setState, togglePanel, useUi, type Panels } from './store';
 import { canvasApi } from './Canvas';
 
 type Top = 'network' | 'end' | 'connections';
@@ -93,6 +93,8 @@ export function Dock() {
   const scenarios = useUi((s) => s.scenarios);
   useUi((s) => s.engineVersion);
 
+  const panels = useUi((s) => s.panels);
+  const wide = useWide();
   const chooseTop = (t: Top) => {
     setTop(t);
     if (SUBS[t][0]) setSub(SUBS[t][0].id);
@@ -100,8 +102,17 @@ export function Dock() {
   const models = MODELS.filter((m) => m.category === sub);
   const caption = hover || (top === 'connections' ? (tool === 'cable' ? CABLE_LABEL[cable] : 'Choose a cable') : placingModel ?? 'Drag a device onto the workspace');
 
+  const any = panels.devices || panels.pdus || panels.mode;
+  // desktop: columns follow whichever sections are open
+  const cols = [panels.devices ? 'auto minmax(0, 1fr)' : '', panels.pdus ? 'minmax(240px, 28%)' : '', panels.mode ? 'auto' : ''].filter(Boolean).join(' ');
+  const onlySmall = !panels.devices && !panels.pdus;
   return (
-    <footer className="dock">
+    <footer className="dock-wrap">
+      <DockBar panels={panels} pdus={scenarios.length} />
+      {any && (
+    <div className={`dock${onlySmall ? ' short' : ''}`} style={wide ? { gridTemplateColumns: cols } : undefined}>
+      {panels.devices && (
+      <>
       <div className="dock-picker">
         <div className="dock-tops" role="tablist" aria-label="Device types">
           {(
@@ -165,7 +176,10 @@ export function Dock() {
         </div>
         <div className="dock-caption">{caption}</div>
       </div>
+      </>
+      )}
 
+      {panels.pdus && (
       <div className="scenarios">
         <div className="scenarios-head">
           <span>Simple PDUs</span>
@@ -210,9 +224,77 @@ export function Dock() {
           <p className="muted small">Choose Add, click a source device, then a destination to send one ping.</p>
         )}
       </div>
+      )}
 
-      <ModeBox />
+      {panels.mode && <ModeBox />}
+    </div>
+      )}
     </footer>
+  );
+}
+
+function useWide() {
+  const q = '(min-width: 761px)';
+  const [wide, setWide] = useState(() => typeof window === 'undefined' || window.matchMedia(q).matches);
+  useEffect(() => {
+    const m = window.matchMedia(q);
+    const on = () => setWide(m.matches);
+    m.addEventListener('change', on);
+    return () => m.removeEventListener('change', on);
+  }, []);
+  return wide;
+}
+
+/** Thin bar above the dock: show or hide each section, or everything at once. */
+function DockBar({ panels, pdus }: { panels: Panels; pdus: number }) {
+  const sim = engine.mode === 'simulation';
+  const any = panels.devices || panels.pdus || panels.mode;
+  const chip = (k: keyof Panels, label: React.ReactNode, title = String(k)) => (
+    <button className={`dock-chip${panels[k] ? ' on' : ''}`} onClick={() => togglePanel(k)} aria-pressed={panels[k]} title={panels[k] ? `Hide ${title}` : `Show ${title}`}>
+      <span className="dock-chip-caret" aria-hidden="true">
+        {panels[k] ? '▾' : '▸'}
+      </span>
+      {label}
+    </button>
+  );
+  return (
+    <div className="dock-bar" role="toolbar" aria-label="Panels">
+      {chip('devices', 'Devices', 'devices')}
+      {chip(
+        'pdus',
+        <>
+          <span className="wide-only">Simple </span>PDUs{pdus ? ` (${pdus})` : ''}
+        </>,
+        'simple PDUs',
+      )}
+      {chip(
+        'mode',
+        <>
+          <span className="wide-only">Time · </span>
+          {sim ? 'Simulation' : 'Realtime'}
+        </>,
+        'time and mode',
+      )}
+      {sim && chip('sim', 'Events', 'the event list')}
+      <span className="dock-bar-fill" />
+      <button
+        className="dock-chip"
+        onClick={() => {
+          const open = !any;
+          (['devices', 'pdus', 'mode'] as const).forEach((k) => togglePanel(k, open));
+        }}
+        title={any ? 'Minimize all panels for more workspace' : 'Show all panels'}
+      >
+        {any ? (
+          <>
+            <span className="wide-only">Minimize </span>
+            <span className="narrow-only">Hide </span>all
+          </>
+        ) : (
+          'Show all'
+        )}
+      </button>
+    </div>
   );
 }
 

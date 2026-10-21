@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { UiIcon } from '../ui/icons';
+import { askConfirm, getState } from '../ui/store';
 import {
   accountsEnabled,
   adminDecide,
@@ -63,7 +64,14 @@ export function AccountButton() {
               Admin: payments and users
             </button>
           )}
-          <button role="menuitem" onClick={() => (setOpen(false), signOut())}>
+          <button
+            role="menuitem"
+            onClick={async () => {
+              setOpen(false);
+              if (getState().dirty && !(await askConfirm('This topology has unsaved changes. Save it first with File > Save, or sign out and leave it here on this device.', 'Sign out anyway'))) return;
+              await signOut();
+            }}
+          >
             Sign out
           </button>
         </div>

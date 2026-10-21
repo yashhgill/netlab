@@ -1633,12 +1633,6 @@ h3 {
   .file-title {
     display: none;
   }
-  .dock {
-    grid-template-columns: auto minmax(0, 1fr) auto;
-  }
-  .scenarios {
-    display: none;
-  }
   .simpanel {
     width: 300px;
   }
@@ -2275,7 +2269,7 @@ h3 {
   .dock {
     display: grid;
     grid-template-columns: 1fr;
-    grid-template-areas: 'picker' 'strip' 'mode';
+    grid-template-areas: 'picker' 'strip' 'pdus' 'mode';
     height: auto;
     padding-bottom: env(safe-area-inset-bottom, 0px);
   }
@@ -2343,7 +2337,10 @@ h3 {
     display: none;
   }
   .scenarios {
-    display: none;
+    grid-area: pdus;
+    max-height: 30vh;
+    border-left: 0;
+    border-top: 1px solid var(--line);
   }
   .modebox {
     grid-area: mode;
@@ -2486,4 +2483,113 @@ h3 {
 }
 @media (max-width: 560px) {
   .pay-settings { grid-template-columns: 1fr; }
+}
+
+
+/* ---------------- collapsible panels ---------------- */
+.dock-wrap {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--paper);
+  border-top: 1px solid var(--line);
+}
+.dock-wrap .dock {
+  border-top: 1px solid var(--line);
+}
+.dock.short {
+  height: auto;
+}
+.dock-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px max(8px, env(safe-area-inset-left, 0px));
+  overflow-x: auto;
+  scrollbar-width: none;
+  background: var(--panel);
+}
+.dock-bar::-webkit-scrollbar {
+  display: none;
+}
+.dock-bar-fill {
+  flex: 1;
+}
+.dock-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 13px;
+  background: none;
+  color: var(--ink-2, inherit);
+  font: inherit;
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.dock-chip:hover {
+  background: var(--paper);
+  border-color: var(--line);
+}
+.dock-chip.on {
+  color: var(--cobalt);
+  font-weight: 500;
+}
+.dock-chip-caret {
+  font-size: 10px;
+  width: 8px;
+}
+.sim-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.sim-min {
+  margin-left: auto;
+}
+.simpanel.min .speed,
+.simpanel.min .sim-filters,
+.simpanel.min .events {
+  display: none;
+}
+.simpanel.min {
+  align-self: flex-start;
+}
+@media (pointer: coarse) {
+  .dock-chip {
+    height: 32px;
+    padding: 0 12px;
+    font-size: 13px;
+  }
+}
+@media (max-width: 760px) {
+  .dock-wrap {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  .dock-wrap .dock {
+    padding-bottom: 0;
+  }
+  .simpanel.min {
+    height: auto;
+    align-self: stretch;
+  }
+}
+.narrow-only {
+  display: none;
+}
+@media (max-width: 760px) {
+  .wide-only {
+    display: none;
+  }
+  .narrow-only {
+    display: inline;
+  }
+  .empty-hint {
+    padding-left: 16px;
+    padding-right: 72px;
+  }
 }

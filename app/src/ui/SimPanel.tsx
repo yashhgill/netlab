@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react';
 import { PDU_COLORS, frameLayers, type PduKind } from '../engine/packets';
 import { simReset, simStep } from './actions';
 import { UiIcon } from './icons';
-import { engine, setState, useUi } from './store';
+import { engine, setState, togglePanel, useUi } from './store';
 
 export function SimPanel() {
   useUi((s) => s.engineVersion);
@@ -12,6 +12,7 @@ export function SimPanel() {
   const listRef = useRef<HTMLDivElement>(null);
   const log = engine.log.filter((p) => filters[p.kind]);
   const pending = engine.pendingCount();
+  const open = useUi((s) => s.panels.sim);
 
   useEffect(() => {
     if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight;
@@ -20,10 +21,13 @@ export function SimPanel() {
   const name = (id: string) => engine.devices.get(id)?.hostname ?? '—';
 
   return (
-    <aside className="simpanel" aria-label="Simulation">
+    <aside className={`simpanel${open ? '' : ' min'}`} aria-label="Simulation">
       <div className="sim-head">
         <h2>Simulation</h2>
         <span className="muted small">{pending ? `${pending} pending` : 'Idle'}</span>
+        <button className="link-btn sim-min" onClick={() => togglePanel('sim')} aria-expanded={open}>
+          {open ? 'Minimize' : 'Expand'}
+        </button>
       </div>
       <div className="sim-controls">
         <button className="btn icon" onClick={simReset} title="Reset simulation (clears traffic, ARP and MAC tables)">
