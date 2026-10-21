@@ -1,0 +1,5 @@
+# Cloudflare Pages project for studio.harnova.my (root directory: studio).
+# Static only: the launcher and HarNova Canvas. NetLab and its AI live on netlab.harnova.my.
+name = "harnova-studio"
+compatibility_date = "2026-10-01"
+pages_build_output_dir = "./_site"
