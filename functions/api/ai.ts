@@ -211,7 +211,7 @@ export async function onRequestPost({ request, env }: Ctx): Promise<Response> {
       const fix = await groq(env, messages, { response_format: { type: 'json_object' } });
       out = fix?.content ? extractJson(fix.content) : null;
     }
-    if (!out) return json({ error: 'The AI answer could not be read. Try asking again in a different way.' }, 502);
+    if (!out) return json({ error: 'The AI answer could not be read. Try asking again in a different way.' }, 424);
     return json({
       reply: String(out.reply ?? ''),
       subnets: Array.isArray(out.subnets) ? out.subnets.slice(0, 64) : [],
@@ -219,7 +219,7 @@ export async function onRequestPost({ request, env }: Ctx): Promise<Response> {
       usage: { used, limit },
     });
   } catch (e) {
-    return json({ error: `The AI service had a problem: ${(e as Error).message}` }, 502);
+    return json({ error: `The AI service had a problem: ${(e as Error).message}` }, 424);
   }
 }
 
