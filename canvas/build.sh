@@ -12,7 +12,8 @@ git -C "$WORK/drawio" sparse-checkout set src/main/webapp
 rm -rf "$OUT"
 mkdir -p "$(dirname "$OUT")"
 cp -R "$WORK/drawio/src/main/webapp" "$OUT"
-cp "$WORK/drawio/LICENSE" "$OUT/LICENSE"
+# read the licence from git directly: older git uses non-cone sparse mode, which leaves root files out
+git -C "$WORK/drawio" show HEAD:LICENSE > "$OUT/LICENSE"
 # server-side pieces we don't use
 rm -rf "$OUT/WEB-INF" "$OUT/META-INF" "$OUT"/*.map "$OUT/js"/*.map
 find "$OUT" -name '*.map' -delete
