@@ -21,7 +21,8 @@ export function describeTopology(engine: Engine) {
       cable: l.cable,
       ...(l.dce ? { dce: l.dce === 'a' ? name(l.a.dev) : name(l.b.dev) } : {}),
     })),
-    availableModels: MODELS.map((m) => ({ id: m.id, kind: m.kind, ports: m.detail })),
+    // one short line per model keeps the request small (the AI provider limits tokens per minute)
+    availableModels: MODELS.map((m) => `${m.id} ${m.kind}: ${m.detail}`),
   };
 }
 

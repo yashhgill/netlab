@@ -19,7 +19,9 @@ function mockFetch(profile: { pro_until: string | null; is_admin: boolean }, gro
     if (url.includes('/rpc/bump_my_ai_usage')) return new Response('3');
     if (url.startsWith('https://api.groq.com')) {
       groqCalls.push(JSON.parse(String(init?.body)));
-      return new Response(JSON.stringify({ choices: [{ message: groqReplies.shift() }] }));
+      const next = groqReplies.shift();
+      if (next === 'RATE') return new Response(JSON.stringify({ error: { message: 'Rate limit reached for model. Please try again in 0.05s.' } }), { status: 429 });
+      return new Response(JSON.stringify({ choices: [{ message: next }] }));
     }
     return new Response('not found', { status: 404 });
   });
@@ -59,5 +61,13 @@ describe('/api/ai', () => {
     const toolMsg = calls[1].messages.find((m) => m.role === 'tool');
     expect(JSON.parse(toolMsg!.content!).subnets.map((s: { network: string; prefix: number }) => `${s.network}/${s.prefix}`)).toEqual(['10.0.0.0/25', '10.0.0.128/30']);
     expect(calls[0].tools).toBeDefined();
+  });
+
+  it('waits out a per-minute rate limit and retries', async () => {
+    const calls = mockFetch({ pro_until: null, is_admin: true }, ['RATE', { role: 'assistant', content: '{"reply":"Hi.","subnets":[],"actions":[]}' }]);
+    const r = await onRequestPost({ request: req('good', { prompt: 'hello' }), env });
+    expect(r.status).toBe(200);
+    expect((await r.json()).reply).toBe('Hi.');
+    expect(calls).toHaveLength(2);
   });
 });

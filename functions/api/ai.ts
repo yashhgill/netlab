@@ -28,7 +28,9 @@ interface Ctx {
 }
 
 const DEFAULT_MODEL = 'qwen/qwen3.8-27b';
-const MAX_TOOL_ROUNDS = 4;
+const MAX_TOOL_ROUNDS = 3;
+/** Longest total time to wait out the provider's per-minute limits within one request. */
+const MAX_RATE_WAIT_MS = 30000;
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } });
@@ -137,7 +139,25 @@ function extractJson(text: string): Record<string, unknown> | null {
 
 type Msg = { role: string; content?: string | null; tool_calls?: { id: string; function: { name: string; arguments: string } }[]; tool_call_id?: string; name?: string };
 
-async function groq(env: Env, messages: Msg[], extra: Record<string, unknown>) {
+class RateLimited extends Error {}
+
+/** Call Groq; when the per-minute token limit is hit, wait it out (briefly) and try again. */
+async function groq(env: Env, messages: Msg[], extra: Record<string, unknown>, budget = { waited: 0 }) {
+  for (;;) {
+    try {
+      return await groqOnce(env, messages, extra);
+    } catch (e) {
+      if (!(e instanceof RateLimited)) throw e;
+      const m = e.message.match(/try again in (?:(\d+)m)?([\d.]+)s/i);
+      const wait = m ? (Number(m[1] ?? 0) * 60 + Number(m[2])) * 1000 + 300 : 8000;
+      if (budget.waited + wait > MAX_RATE_WAIT_MS) throw new Error('The AI is busy right now. Please try again in a minute.');
+      budget.waited += wait;
+      await new Promise((r) => setTimeout(r, wait));
+    }
+  }
+}
+
+async function groqOnce(env: Env, messages: Msg[], extra: Record<string, unknown>) {
   const r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
     headers: { authorization: `Bearer ${env.GROQ_API_KEY}`, 'content-type': 'application/json' },
@@ -151,6 +171,7 @@ async function groq(env: Env, messages: Msg[], extra: Record<string, unknown>) {
     }),
   });
   const body = (await r.json().catch(() => ({}))) as { choices?: { message: Msg }[]; error?: { message?: string } };
+  if (r.status === 429) throw new RateLimited(body.error?.message || 'rate limited');
   if (!r.ok) throw new Error(body.error?.message || `Groq returned ${r.status}`);
   return body.choices?.[0]?.message;
 }
@@ -182,7 +203,7 @@ export async function onRequestPost({ request, env }: Ctx): Promise<Response> {
   const prompt = String(body.prompt || '').slice(0, 4000);
   if (!prompt.trim()) return json({ error: 'Type a question or a task first.' }, 400);
   const topo = JSON.stringify(body.topology ?? {}).slice(0, 60000);
-  const history = (body.history || []).slice(-6).map((h) => ({ role: h.role === 'assistant' ? 'assistant' : 'user', content: String(h.content).slice(0, 4000) }));
+  const history = (body.history || []).slice(-4).map((h) => ({ role: h.role === 'assistant' ? 'assistant' : 'user', content: String(h.content).slice(0, 1500) }));
 
   const messages: Msg[] = [
     { role: 'system', content: SYSTEM },
@@ -192,8 +213,9 @@ export async function onRequestPost({ request, env }: Ctx): Promise<Response> {
 
   try {
     let final: Msg | undefined;
+    const budget = { waited: 0 };
     for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
-      const msg = await groq(env, messages, round < MAX_TOOL_ROUNDS ? { tools: TOOLS, tool_choice: 'auto' } : {});
+      const msg = await groq(env, messages, round < MAX_TOOL_ROUNDS ? { tools: TOOLS, tool_choice: 'auto' } : {}, budget);
       if (!msg) throw new Error('The model returned no answer.');
       if (msg.tool_calls?.length) {
         messages.push({ role: 'assistant', content: msg.content ?? '', tool_calls: msg.tool_calls });
@@ -208,7 +230,7 @@ export async function onRequestPost({ request, env }: Ctx): Promise<Response> {
       // Ask once more, in JSON mode, to restate the answer in the required shape.
       messages.push({ role: 'assistant', content: final?.content ?? '' });
       messages.push({ role: 'user', content: 'Restate your final answer as the required JSON object only.' });
-      const fix = await groq(env, messages, { response_format: { type: 'json_object' } });
+      const fix = await groq(env, messages, { response_format: { type: 'json_object' } }, budget);
       out = fix?.content ? extractJson(fix.content) : null;
     }
     if (!out) return json({ error: 'The AI answer could not be read. Try asking again in a different way.' }, 424);
@@ -219,7 +241,8 @@ export async function onRequestPost({ request, env }: Ctx): Promise<Response> {
       usage: { used, limit },
     });
   } catch (e) {
-    return json({ error: `The AI service had a problem: ${(e as Error).message}` }, 424);
+    const msg = (e as Error).message;
+    return json({ error: msg.startsWith('The AI is busy') ? msg : `The AI service had a problem: ${msg}` }, 424);
   }
 }
 
