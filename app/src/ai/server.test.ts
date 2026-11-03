@@ -127,4 +127,25 @@ describe('/api/ai', () => {
     expect(body.provider).toBe('Gemini');
     expect(calls).toHaveLength(2);
   });
+
+  it('retries once when the provider rejects a malformed tool call, and accepts loose tool arguments', async () => {
+    let n = 0;
+    const calls = mockFetch({ pro_until: null, is_admin: true }, []);
+    const f = vi.mocked(fetch) as unknown as ReturnType<typeof vi.fn<(url: string, init?: RequestInit) => Promise<Response>>>;
+    const orig = f.getMockImplementation()!;
+    f.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (String(url).startsWith('https://api.groq.com')) {
+        calls.push(JSON.parse(String(init?.body)));
+        n++;
+        if (n === 1) return new Response(JSON.stringify({ error: { message: 'tool call validation failed: parameters for tool vlsm did not match schema', code: 'tool_use_failed' } }), { status: 400 });
+        if (n === 2) return new Response(JSON.stringify({ choices: [{ message: { role: 'assistant', content: null, tool_calls: [{ id: 't', type: 'function', function: { name: 'vlsm', arguments: '{"network":"10.0.0.0/24","subnets":[{"name":"A","hosts":"20"}]}' } }] } }] }));
+        return new Response(JSON.stringify({ choices: [{ message: { role: 'assistant', content: '{"reply":"Ok.","subnets":[],"actions":[]}' } }] }));
+      }
+      return orig(url, init);
+    });
+    const r = await onRequestPost({ request: req('good', { prompt: 'plan' }), env });
+    expect(r.status).toBe(200);
+    const tool = calls[2].messages.find((m) => m.role === 'tool');
+    expect(JSON.parse(tool!.content!).subnets[0].prefix).toBe(27);
+  });
 });

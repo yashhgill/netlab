@@ -122,12 +122,12 @@ const TOOLS = [
             type: 'array',
             items: {
               type: 'object',
-              properties: { name: { type: 'string' }, hosts: { type: 'integer', description: 'Usable host addresses needed (use 2 for a point-to-point link)' } },
-              required: ['name', 'hosts'],
+              properties: { name: { type: 'string' }, hosts: { description: 'Usable host addresses needed, a whole number (use 2 for a point-to-point link)' } },
             },
           },
         },
-        required: ['base', 'needs'],
+        // nothing is required here: Groq rejects a whole request when a tool call misses a
+        // required field, so runTool checks the fields and tells the model what's missing instead
       },
     },
   },
@@ -136,7 +136,7 @@ const TOOLS = [
     function: {
       name: 'subnet_info',
       description: 'Network, mask, wildcard, broadcast and usable range for an address in CIDR form.',
-      parameters: { type: 'object', properties: { cidr: { type: 'string', description: 'e.g. 10.1.5.77/27' } }, required: ['cidr'] },
+      parameters: { type: 'object', properties: { cidr: { type: 'string', description: 'e.g. 10.1.5.77/27' } } },
     },
   },
 ];
@@ -144,6 +144,14 @@ const TOOLS = [
 function runTool(name: string, args: string): string {
   try {
     const a = JSON.parse(args || '{}');
+    // accept the names models often use instead
+    if (name === 'vlsm' && typeof a.base !== 'string') a.base = a.network ?? a.cidr ?? a.base_network ?? a.supernet;
+    if (name === 'vlsm' && !Array.isArray(a.needs)) a.needs = a.subnets ?? a.requirements ?? a.lans;
+    if (name === 'vlsm' && Array.isArray(a.needs)) a.needs = a.needs.map((n: Record<string, unknown>) => ({ name: n.name ?? n.lan ?? 'Subnet', hosts: n.hosts ?? n.size ?? n.count }));
+    if (name === 'subnet_info' && typeof a.cidr !== 'string') a.cidr = a.network ?? a.address ?? a.ip;
+    if (name === 'vlsm' && (typeof a.base !== 'string' || !a.base.includes('/'))) return JSON.stringify({ error: 'Give "base" as the network to divide in CIDR form, e.g. "192.168.10.0/24", and "needs" as [{"name": "LAN1", "hosts": 50}, ...].' });
+    if (name === 'vlsm' && (!Array.isArray(a.needs) || !a.needs.length)) return JSON.stringify({ error: 'Give "needs": one entry per subnet, e.g. [{"name": "LAN1", "hosts": 50}, {"name": "R1-R2", "hosts": 2}].' });
+    if (name === 'subnet_info' && typeof a.cidr !== 'string') return JSON.stringify({ error: 'Give "cidr", e.g. "10.1.5.77/27".' });
     if (name === 'vlsm') return JSON.stringify(vlsm(String(a.base), Array.isArray(a.needs) ? a.needs.map((n: { name: unknown; hosts: unknown }) => ({ name: String(n.name), hosts: Number(n.hosts) })) : []));
     if (name === 'subnet_info') return JSON.stringify(subnetInfo(String(a.cidr)));
     return JSON.stringify({ error: `Unknown tool ${name}` });
@@ -308,6 +316,7 @@ async function callOnce(env: Env, p: Provider, messages: Msg[], extra: Record<st
   const base = { model: p.model, messages, temperature: 0.2, ...extra };
   const tuned: Record<string, unknown> = p.tune ? p.tune(base) : base;
   delete tuned.max_out;
+  delete tuned.__retried;
   const r = await fetch(p.url, {
     method: 'POST',
     headers: { authorization: `Bearer ${p.key}`, 'content-type': 'application/json', ...(p.headers ?? {}) },
@@ -321,6 +330,11 @@ async function callOnce(env: Env, p: Provider, messages: Msg[], extra: Record<st
   if (r.status === 400 && p.name === 'Groq' && /reasoning/i.test(message) && !env.__noReasoningParam) {
     env.__noReasoningParam = true;
     return callOnce(env, { ...providers(env).find((x) => x.name === 'Groq')!, model: p.model }, messages, extra);
+  }
+  // the model wrote a malformed tool call: ask again (once), then let the next provider try
+  if (r.status === 400 && /tool call validation|tool_use_failed|failed to call a function|parse tool call/i.test(message)) {
+    if (!extra.__retried) return callOnce(env, p, messages, { ...extra, __retried: true, temperature: 0.5 });
+    throw new Error(`${p.name}: ${message}`);
   }
   if (!r.ok) throw new Error(`${p.name}: ${message}`);
   const msg = body.choices?.[0]?.message;
