@@ -1,0 +1,9 @@
+<!-- Supabase > Authentication > Emails: paste this into BOTH "Magic link" and "Confirm sign up".
+     Subject for both: Your NetLab sign-in code: {{ .Token }} -->
+<div style="font-family:Arial,Helvetica,sans-serif;max-width:480px;margin:0 auto;padding:24px;color:#18212b">
+  <h2 style="margin:0 0 12px">Your NetLab sign-in code</h2>
+  <p style="margin:0 0 16px">Type this code in NetLab to sign in:</p>
+  <p style="font-size:32px;letter-spacing:8px;font-weight:bold;margin:0 0 16px;font-family:'Courier New',monospace">{{ .Token }}</p>
+  <p style="margin:0 0 8px;color:#5d6b78;font-size:13px">It works once and expires in an hour. If you didn't ask for it, ignore this email.</p>
+  <p style="margin:24px 0 0;color:#5d6b78;font-size:12px">HarNova NetLab · netlab.harnova.my</p>
+</div>
