@@ -2755,3 +2755,137 @@ circle.shape-handle { cursor: grab; }
     max-width: none;
   }
 }
+
+/* sign-in code */
+.code-input {
+  font-family: var(--mono);
+  font-size: 22px;
+  letter-spacing: 0.3em;
+  text-align: center;
+}
+.row-between {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.link-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+  text-decoration: none;
+}
+.give-pro {
+  display: grid;
+  gap: 6px;
+  padding: 10px 0 12px;
+  border-bottom: 1px solid var(--line, #e3e6ea);
+  margin-bottom: 10px;
+}
+.give-pro-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+.give-pro-row .grow {
+  flex: 1 1 220px;
+}
+
+/* AI: attachments, guided steps, plan test */
+.ai-chat.dragging {
+  outline: 2px dashed var(--cobalt);
+  outline-offset: -6px;
+}
+.ai-files {
+  flex-basis: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+.ai-file {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 2px 4px 2px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ai-file .icon-btn {
+  width: 22px;
+  height: 22px;
+}
+.ai-bubble-files {
+  margin-top: 4px;
+  font-size: 12px;
+  opacity: 0.8;
+}
+.ai-steps {
+  margin: 8px 0 0;
+  padding-left: 20px;
+  display: grid;
+  gap: 10px;
+}
+.ai-step-head {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+.ai-step-dev {
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 0 6px;
+  border-radius: 4px;
+  background: rgba(127, 127, 127, 0.14);
+}
+.ai-cmds {
+  position: relative;
+  margin-top: 4px;
+}
+.ai-cmds pre {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: #0f1b24;
+  color: #d8f3e6;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  overflow-x: auto;
+  white-space: pre;
+}
+.ai-cmds .link-btn {
+  position: absolute;
+  top: 4px;
+  right: 8px;
+  color: #9fd8c4;
+}
+.ai-check {
+  margin: 10px 0 4px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 13px;
+  border: 1px solid var(--line);
+}
+.ai-check.ok {
+  border-color: rgba(31, 157, 107, 0.45);
+  background: rgba(31, 157, 107, 0.08);
+}
+.ai-check.bad {
+  border-color: rgba(200, 120, 30, 0.5);
+  background: rgba(230, 150, 40, 0.09);
+}
+.ai-check ul {
+  margin: 6px 0 4px;
+  padding-left: 18px;
+}
+.ai-apply-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}

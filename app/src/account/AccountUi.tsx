@@ -4,23 +4,22 @@ import { askConfirm, getState } from '../ui/store';
 import {
   accountsEnabled,
   adminDecide,
+  adminGrantPro,
+  adminGrants,
+  type ProGrant,
   adminPayments,
   adminSetPro,
   adminUsers,
   DEFAULT_PAYMENT,
-  GOOGLE_ENABLED,
   isPro,
   loadPaymentSettings,
   savePaymentSettings,
-  sendPasswordReset,
-  setNewPassword,
-  signInWithPassword,
-  signUpWithPassword,
+  sendSignInCode,
+  verifySignInCode,
   type PaymentSettings,
   myPayments,
   openAccountDialog,
   refreshProfile,
-  signInWithGoogle,
   signOut,
   submitPayment,
   useAccount,
@@ -88,7 +87,7 @@ export function AccountDialogs() {
     <div className="modal-back" onPointerDown={close}>
       <div className={`modal${dialog === 'admin' ? ' wide' : ''}`} role="dialog" aria-label={dialog} onPointerDown={(e) => e.stopPropagation()}>
         <div className="modal-head">
-          <h2>{dialog === 'signin' ? 'Sign in to NetLab' : dialog === 'upgrade' ? 'NetLab Pro' : dialog === 'newpassword' ? 'Choose a new password' : 'Admin'}</h2>
+          <h2>{dialog === 'signin' ? 'Sign in to NetLab' : dialog === 'upgrade' ? 'NetLab Pro' : 'Admin'}</h2>
           <button className="icon-btn" onClick={close} aria-label="Close">
             <UiIcon.close />
           </button>
@@ -96,148 +95,103 @@ export function AccountDialogs() {
         {dialog === 'signin' && <SignIn />}
         {dialog === 'upgrade' && <Upgrade />}
         {dialog === 'admin' && <Admin />}
-        {dialog === 'newpassword' && <NewPassword />}
       </div>
     </div>
   );
 }
 
-const GoogleLogo = () => (
-  <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true">
-    <path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 13 4 4 13 4 24s9 20 20 20 20-9 20-20c0-1.3-.1-2.4-.4-3.5z" />
-    <path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z" />
-    <path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-8l-6.5 5C9.5 39.6 16.2 44 24 44z" />
-    <path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.4-.4-3.5z" />
-  </svg>
-);
-
 function SignIn() {
-  const [mode, setMode] = useState<'signin' | 'signup' | 'forgot'>('signin');
+  const [step, setStep] = useState<'email' | 'code'>('email');
   const [email, setEmail] = useState('');
-  const [pw, setPw] = useState('');
-  const [note, setNote] = useState<string | null>(null);
+  const [code, setCode] = useState('');
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const emailOk = /.+@.+\..+/.test(email);
-  const go = (m: typeof mode) => {
-    setMode(m);
+  const [wait, setWait] = useState(0);
+  const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
+  const digits = code.replace(/\D/g, '');
+
+  useEffect(() => {
+    if (wait <= 0) return;
+    const t = setTimeout(() => setWait(wait - 1), 1000);
+    return () => clearTimeout(t);
+  }, [wait]);
+
+  const send = async () => {
+    setBusy(true);
     setErr(null);
-    setNote(null);
+    const r = await sendSignInCode(email);
+    setBusy(false);
+    if (r) return setErr(r);
+    setStep('code');
+    setCode('');
+    setWait(60);
   };
-  if (note) {
+
+  if (step === 'code') {
     return (
-      <div className="stack">
-        <p>{note}</p>
-        <p className="muted small">No email after a minute? Check your spam folder.</p>
-        <button className="btn" onClick={() => go('signin')}>
-          Back to sign in
-        </button>
-      </div>
-    );
-  }
-  return (
-    <form
-      className="stack"
-      onSubmit={async (e) => {
-        e.preventDefault();
-        setBusy(true);
-        setErr(null);
-        if (mode === 'signin') setErr(await signInWithPassword(email, pw));
-        else if (mode === 'signup') {
-          const r = await signUpWithPassword(email, pw);
-          if (r.error) setErr(r.error);
-          else if (r.confirm) setNote(`We sent a confirmation link to ${email}. Open it to finish creating your account.`);
-        } else {
-          const r = await sendPasswordReset(email);
+      <form
+        className="stack"
+        onSubmit={async (e) => {
+          e.preventDefault();
+          setBusy(true);
+          setErr(null);
+          const r = await verifySignInCode(email, digits);
+          setBusy(false);
           if (r) setErr(r);
-          else setNote(`If ${email} has an account, a link to choose a new password is on its way.`);
-        }
-        setBusy(false);
-      }}
-    >
-      <div className="seg" role="tablist">
-        <button type="button" role="tab" aria-selected={mode === 'signin'} className={mode === 'signin' ? 'on' : ''} onClick={() => go('signin')}>
-          Sign in
-        </button>
-        <button type="button" role="tab" aria-selected={mode === 'signup'} className={mode === 'signup' ? 'on' : ''} onClick={() => go('signup')}>
-          Create account
-        </button>
-      </div>
-      <p className="muted small">Your topologies stay on this device. An account is needed for the AI assistant.</p>
-      {GOOGLE_ENABLED && mode !== 'forgot' && (
-        <>
-          <button
-            type="button"
-            className="btn google"
-            onClick={async () => {
-              const r = await signInWithGoogle();
-              if (r) setErr(r);
-            }}
-          >
-            <GoogleLogo />
-            Continue with Google
-          </button>
-          <div className="or">or</div>
-        </>
-      )}
-      <label className="stack-field">
-        <span>Email</span>
-        <input id="signin-email" type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" />
-      </label>
-      {mode !== 'forgot' && (
+        }}
+      >
+        <p>
+          We emailed a sign-in code to <strong>{email.trim()}</strong>. Type it here.
+        </p>
         <label className="stack-field">
-          <span>Password</span>
+          <span>Code</span>
           <input
-            id="signin-password"
-            type="password"
-            autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
-            required
-            minLength={mode === 'signup' ? 8 : 1}
-            value={pw}
-            onChange={(e) => setPw(e.target.value)}
-            placeholder={mode === 'signup' ? 'At least 8 characters' : ''}
+            id="signin-code"
+            className="code-input"
+            inputMode="numeric"
+            autoComplete="one-time-code"
+            autoFocus
+            maxLength={12}
+            value={code}
+            onChange={(e) => setCode(e.target.value.replace(/[^\d\s]/g, ''))}
+            placeholder="123456"
           />
         </label>
-      )}
-      {err && <p className="field-err">{err}</p>}
-      <button className="btn primary" type="submit" disabled={busy || !emailOk || (mode === 'signup' && pw.length < 8) || (mode === 'signin' && !pw)}>
-        {busy ? 'Please wait…' : mode === 'signin' ? 'Sign in' : mode === 'signup' ? 'Create account' : 'Email me a reset link'}
-      </button>
-      {mode === 'signin' && (
-        <button type="button" className="link-btn" onClick={() => go('forgot')}>
-          Forgot your password?
+        {err && <p className="field-err">{err}</p>}
+        <button className="btn primary" type="submit" disabled={busy || digits.length < 6}>
+          {busy ? 'Checking…' : 'Sign in'}
         </button>
-      )}
-      {mode === 'forgot' && (
-        <button type="button" className="link-btn" onClick={() => go('signin')}>
-          Back to sign in
-        </button>
-      )}
-    </form>
-  );
-}
+        <p className="muted small">The code works once and expires after an hour. No email? Check your spam folder.</p>
+        <div className="row-between">
+          <button type="button" className="link-btn" onClick={() => (setStep('email'), setErr(null))}>
+            Use a different email
+          </button>
+          <button type="button" className="link-btn" disabled={busy || wait > 0} onClick={send}>
+            {wait > 0 ? `Send a new code in ${wait}s` : 'Send a new code'}
+          </button>
+        </div>
+      </form>
+    );
+  }
 
-function NewPassword() {
-  const [pw, setPw] = useState('');
-  const [err, setErr] = useState<string | null>(null);
   return (
     <form
       className="stack"
-      onSubmit={async (e) => {
+      onSubmit={(e) => {
         e.preventDefault();
-        const r = await setNewPassword(pw);
-        if (r) setErr(r);
-        else openAccountDialog(null);
+        if (emailOk) send();
       }}
     >
+      <p className="muted small">Type your email and we'll send you a 6-digit code. No password needed. New here? The same code creates your account.</p>
       <label className="stack-field">
-        <span>New password</span>
-        <input id="new-password" type="password" autoComplete="new-password" minLength={8} required value={pw} onChange={(e) => setPw(e.target.value)} placeholder="At least 8 characters" />
+        <span>Email</span>
+        <input id="signin-email" type="email" autoComplete="email" autoFocus required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" />
       </label>
       {err && <p className="field-err">{err}</p>}
-      <button className="btn primary" type="submit" disabled={pw.length < 8}>
-        Save password
+      <button className="btn primary" type="submit" disabled={busy || !emailOk}>
+        {busy ? 'Sending…' : 'Email me a code'}
       </button>
+      <p className="muted small">Your topologies stay on this device. An account is needed for the AI assistant.</p>
     </form>
   );
 }
@@ -458,6 +412,7 @@ function Admin() {
         </>
       ) : (
         <>
+          <GiveProForm onDone={load} />
           <input id="admin-search" className="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search by email" />
           <div className="ai-table-wrap">
             <table className="grid-table compact">
@@ -506,6 +461,90 @@ function Admin() {
             </table>
           </div>
         </>
+      )}
+    </div>
+  );
+}
+
+const GRANT_LENGTHS = [
+  { label: '1 week', days: 7 },
+  { label: '1 month', days: 30 },
+  { label: '3 months', days: 91 },
+  { label: '6 months', days: 182 },
+  { label: '1 year', days: 365 },
+];
+
+/** Give Pro to any email, e.g. a lecturer testing the AI. Applies at sign-up if they have no account yet. */
+function GiveProForm({ onDone }: { onDone: () => void }) {
+  const [email, setEmail] = useState('');
+  const [days, setDays] = useState(30);
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [grants, setGrants] = useState<ProGrant[]>([]);
+  const loadGrants = () => void adminGrants().then(setGrants);
+  useEffect(loadGrants, []);
+  const ok = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
+  return (
+    <div className="give-pro">
+      <form
+        className="give-pro-row"
+        onSubmit={async (e) => {
+          e.preventDefault();
+          setBusy(true);
+          const until = new Date(Date.now() + days * 86400000).toISOString();
+          const r = await adminGrantPro(email, until, 'Given by admin');
+          setBusy(false);
+          if (r.error) return setMsg({ ok: false, text: r.error });
+          setMsg({
+            ok: true,
+            text:
+              r.result === 'waiting'
+                ? `${email.trim()} has no account yet. Pro starts as soon as they sign in with that email, and lasts until ${fmtDate(until)}.`
+                : `${email.trim()} now has Pro until ${fmtDate(until)}.`,
+          });
+          setEmail('');
+          loadGrants();
+          onDone();
+        }}
+      >
+        <label className="stack-field grow">
+          <span>Give Pro to an email</span>
+          <input id="give-pro-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="lecturer@utem.edu.my" />
+        </label>
+        <label className="stack-field">
+          <span>For</span>
+          <select id="give-pro-days" value={days} onChange={(e) => setDays(Number(e.target.value))}>
+            {GRANT_LENGTHS.map((g) => (
+              <option key={g.days} value={g.days}>
+                {g.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button className="btn primary" type="submit" disabled={busy || !ok}>
+          {busy ? 'Saving…' : 'Give Pro'}
+        </button>
+      </form>
+      {msg && <p className={msg.ok ? 'muted small' : 'field-err'}>{msg.text}</p>}
+      {!!grants.length && (
+        <div className="muted small">
+          Waiting for sign-up:{' '}
+          {grants.map((g, i) => (
+            <span key={g.email}>
+              {i ? ', ' : ''}
+              {g.email} (until {fmtDate(g.pro_until)}){' '}
+              <button
+                className="link-btn danger"
+                onClick={async () => {
+                  await adminGrantPro(g.email, null);
+                  loadGrants();
+                }}
+              >
+                cancel
+              </button>
+            </span>
+          ))}
+        </div>
       )}
     </div>
   );

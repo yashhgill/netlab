@@ -1,7 +1,9 @@
 /**
  * NetLab AI assistant (Cloudflare Pages Function, served at /api/ai).
  *
- * 1. Checks the caller's Supabase session and that they have Pro access.
+ * 1. Checks the caller's Supabase session. Pro accounts get "build" answers (actions NetLab
+ *    applies, and lab sheets or pictures read); free accounts get "guide" answers (steps and
+ *    the exact commands to type).
  * 2. Counts usage per day.
  * 3. Asks a free AI provider (Groq, then Gemini, Cerebras or OpenRouter when one is busy)
  *    for help, giving it exact subnet calculators as tools,
@@ -29,6 +31,10 @@ interface Env {
   SUPABASE_URL: string;
   SUPABASE_ANON_KEY: string;
   AI_DAILY_LIMIT?: string;
+  /** Daily requests for free accounts (guided answers). */
+  AI_FREE_DAILY_LIMIT?: string;
+  /** Groq model used when pictures are attached (must accept images). */
+  GROQ_VISION_MODEL?: string;
   /** Set at runtime when the model doesn't accept reasoning_effort. */
   __noReasoningParam?: boolean;
 }
@@ -46,19 +52,28 @@ const MAX_RATE_WAIT_MS = 30000;
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } });
 
-const SYSTEM = `You are the NetLab assistant, an expert network engineer and patient CCNA tutor inside a network simulator.
-The user's current topology is given as JSON. Help them design, address and configure it.
-
-Rules:
-- For any subnetting or VLSM, ALWAYS call the vlsm or subnet_info tool. Never do subnet arithmetic yourself.
-- Give each LAN's default gateway the first usable address of its subnet unless the user asks otherwise.
+const RULES = `Rules:
+- For any subnetting or VLSM, ALWAYS call the vlsm or subnet_info tool. Never do subnet arithmetic yourself. Copy network, mask, gateway and range values exactly from the tool output.
+- Give each LAN's default gateway the first usable address of its subnet unless the user or their document says otherwise.
 - Point-to-point links between routers use /30 subnets.
-- Only use device names and port names that exist in the topology, unless you add devices with add_device first.
-- Router and switch configuration is IOS-style. "cli" commands start in global configuration mode (after "configure terminal"), one command per array item, e.g. ["interface g0/0", "ip address 192.168.1.1 255.255.255.0", "no shutdown", "exit"].
-- Router interfaces start shut down, so include "no shutdown".
-- Static routes: "ip route <network> <mask> <next-hop>". Multilayer switches need "ip routing". Serial DCE ends need "clock rate 64000".
-- Supported features: static routing, VLANs, 802.1Q trunks, router-on-a-stick sub-interfaces, SVIs, routed ports (no switchport), DHCP pools (ip dhcp pool, network, default-router, dns-server, ip dhcp excluded-address), ip helper-address, serial links (clock rate, encapsulation ppp/hdlc), passwords, banners, wireless access points (clients join by SSID; wireless models NL-PC-W, NL-Laptop-W, NL-Tablet, NL-Smartphone). Not supported: OSPF, RIP, EIGRP, ACLs, NAT, STP tuning. If asked, explain and offer static routes instead.
-- Keep explanations short, friendly and student-level. Use plain text with short lines; no markdown tables.
+- Hosts get addresses from the usable range of their own LAN, never the network, broadcast or gateway address, and never an address another device already uses.
+- Only use device names and port names that exist in the topology, unless you add devices with add_device first. Pick free ports listed in freePorts.
+- Router and switch configuration is IOS-style. Router interfaces start shut down, so include "no shutdown".
+- Static routes: "ip route <network> <mask> <next-hop>". Every router needs a route to every network it is not directly connected to (or a default route), and the return path too.
+- Multilayer switches need "ip routing". Serial DCE ends need "clock rate 64000".
+- VLANs: create them on the switch ("vlan 10", "name STAFF"), set access ports ("switchport mode access", "switchport access vlan 10") and trunk the uplink ("switchport mode trunk"). Router-on-a-stick uses sub-interfaces "interface g0/0.10", "encapsulation dot1Q 10", "ip address ...", and "no shutdown" on the parent interface.
+- DHCP on a router: "ip dhcp excluded-address <first> <last>", "ip dhcp pool NAME", "network <net> <mask>", "default-router <gw>", "dns-server <ip>"; hosts then use host_dhcp. A DHCP server on another network needs "ip helper-address" on the LAN interface.
+- Supported features: static routing, VLANs, 802.1Q trunks, router-on-a-stick sub-interfaces, SVIs, routed ports (no switchport), DHCP pools, ip helper-address, serial links (clock rate, encapsulation ppp/hdlc), passwords, banners, wireless access points (clients join by SSID; wireless models NL-PC-W, NL-Laptop-W, NL-Tablet, NL-Smartphone). Not supported: OSPF, RIP, EIGRP, ACLs, NAT, STP tuning. If asked, explain and offer static routes instead.
+- If the user attached documents or pictures (a lab sheet, a topology drawing, an addressing table), read them carefully and follow them exactly: the same device types, names, number of PCs, links, VLAN numbers and addresses. Only calculate what the document leaves out.
+- Before you answer, check your own work: every address is inside its subnet, every host gateway is the router or SVI address of the same subnet, no address is used twice, every needed route exists in both directions.
+- Keep explanations short, friendly and student-level. Use plain text with short lines; no markdown tables.`;
+
+const SYSTEM_BUILD = `You are the NetLab assistant, an expert network engineer and patient CCNA tutor inside a network simulator.
+The user's current topology is given as JSON. You design, address and configure it for them: you pick the devices, cable them, plan the subnets and write every configuration. NetLab applies your actions after the user reviews them.
+
+${RULES}
+- "cli" commands start in global configuration mode (after "configure terminal"), one command per array item, e.g. ["interface g0/0", "ip address 192.168.1.1 255.255.255.0", "no shutdown", "exit"].
+- When building new devices, choose models from availableModels (e.g. a router with enough ports, a switch with enough access ports) and name them like R1, R2, S1, PC1.
 
 Your FINAL message must be only a JSON object, no other text:
 {
@@ -72,7 +87,26 @@ Your FINAL message must be only a JSON object, no other text:
     { "type": "host_dhcp", "device": "PC0" }
   ]
 }
-Use "subnets": [] and "actions": [] when nothing needs to change (for example when only explaining).`;
+Order the actions: add devices, then cables, then configuration. Use "subnets": [] and "actions": [] when nothing needs to change (for example when only explaining).`;
+
+const SYSTEM_GUIDE = `You are the NetLab tutor, an expert network engineer and patient CCNA tutor inside a network simulator.
+The user's current topology is given as JSON. Guide them to the solution so they learn by doing it themselves: explain the plan, then give exact steps they follow and the exact commands to type. You do not change their network yourself.
+
+${RULES}
+- In "commands", give the full sequence to type in the device's CLI, starting from "enable" and "configure terminal" and ending with "end" and "write memory", one command per item.
+- For PCs and other end devices, put the settings in "note" (IP address, subnet mask, default gateway, DNS) and leave "commands" empty, with "where": "desktop".
+- For cabling, say which ports to join in "note" with "where": "cable". For adding devices, "where": "add".
+- When they ask about one command or an error message, explain it simply and show the correct command.
+
+Your FINAL message must be only a JSON object, no other text:
+{
+  "reply": "the plan and why, in a few short sentences",
+  "subnets": [ { "name": "...", "network": "a.b.c.d", "prefix": 26, "mask": "...", "gateway": "...", "range": "first - last" } ],
+  "steps": [
+    { "title": "Configure R1's LAN interface", "device": "R1", "where": "cli|desktop|cable|add", "commands": ["enable", "configure terminal", "..."], "note": "optional short tip" }
+  ]
+}
+Use "subnets": [] and "steps": [] when only explaining.`;
 
 const TOOLS = [
   {
@@ -148,7 +182,8 @@ function extractJson(text: string): Record<string, unknown> | null {
   }
 }
 
-type Msg = { role: string; content?: string | null; tool_calls?: { id: string; function: { name: string; arguments: string } }[]; tool_call_id?: string; name?: string };
+type Part = { type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } };
+type Msg = { role: string; content?: string | Part[] | null; tool_calls?: { id: string; function: { name: string; arguments: string } }[]; tool_call_id?: string; name?: string };
 
 class RateLimited extends Error {
   provider: string;
@@ -165,6 +200,8 @@ interface Provider {
   key: string;
   model: string;
   headers?: Record<string, string>;
+  /** Accepts pictures in the message. */
+  vision: boolean;
   /** Extra request fields this provider understands. */
   tune?: (body: Record<string, unknown>) => Record<string, unknown>;
 }
@@ -177,7 +214,8 @@ export function providers(env: Env): Provider[] {
       url: 'https://api.groq.com/openai/v1/chat/completions',
       key: env.GROQ_API_KEY,
       model: env.GROQ_MODEL || DEFAULT_MODEL,
-      tune: (b) => ({ ...b, max_completion_tokens: 2048, ...(env.__noReasoningParam ? {} : { reasoning_effort: 'none' }) }),
+      vision: true,
+      tune: (b) => ({ ...b, max_completion_tokens: (b.max_out as number) ?? 2048, ...(env.__noReasoningParam ? {} : { reasoning_effort: 'none' }) }),
     });
   if (env.GEMINI_API_KEY)
     list.push({
@@ -185,7 +223,8 @@ export function providers(env: Env): Provider[] {
       url: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
       key: env.GEMINI_API_KEY,
       model: env.GEMINI_MODEL || 'gemini-3.8-flash',
-      tune: (b) => ({ ...b, max_tokens: 2048, reasoning_effort: 'low' }),
+      vision: true,
+      tune: (b) => ({ ...b, max_tokens: (b.max_out as number) ?? 2048, reasoning_effort: 'low' }),
     });
   if (env.CEREBRAS_API_KEY)
     list.push({
@@ -193,7 +232,8 @@ export function providers(env: Env): Provider[] {
       url: 'https://api.cerebras.ai/v1/chat/completions',
       key: env.CEREBRAS_API_KEY,
       model: env.CEREBRAS_MODEL || 'gpt-oss-120b',
-      tune: (b) => ({ ...b, max_completion_tokens: 2048 }),
+      vision: false,
+      tune: (b) => ({ ...b, max_completion_tokens: (b.max_out as number) ?? 2048 }),
     });
   if (env.OPENROUTER_API_KEY)
     list.push({
@@ -202,7 +242,8 @@ export function providers(env: Env): Provider[] {
       key: env.OPENROUTER_API_KEY,
       model: env.OPENROUTER_MODEL || 'openrouter/free',
       headers: { 'HTTP-Referer': 'https://netlab.harnova.my', 'X-Title': 'HarNova NetLab' },
-      tune: (b) => ({ ...b, max_tokens: 2048 }),
+      vision: true,
+      tune: (b) => ({ ...b, max_tokens: (b.max_out as number) ?? 2048 }),
     });
   return list;
 }
@@ -225,8 +266,11 @@ interface Budget {
  * to the next one; only when every provider is busy do we wait briefly and retry.
  */
 async function chat(env: Env, messages: Msg[], extra: Record<string, unknown>, budget: Budget = { waited: 0 }) {
-  const all = providers(env);
-  if (!all.length) throw new Error('No AI provider is set up.');
+  const pictures = messages.some((m) => Array.isArray(m.content) && m.content.some((p) => p.type === 'image_url'));
+  const all = providers(env)
+    .filter((p) => !pictures || p.vision)
+    .map((p) => (pictures && p.name === 'Groq' && env.GROQ_VISION_MODEL ? { ...p, model: env.GROQ_VISION_MODEL } : p));
+  if (!all.length) throw new Error(pictures ? 'No AI provider that can read pictures is set up.' : 'No AI provider is set up.');
   for (;;) {
     const order = budget.prefer ? [...all.filter((p) => p.name === budget.prefer), ...all.filter((p) => p.name !== budget.prefer)] : all;
     let soonest = Infinity;
@@ -262,10 +306,12 @@ async function chat(env: Env, messages: Msg[], extra: Record<string, unknown>, b
 
 async function callOnce(env: Env, p: Provider, messages: Msg[], extra: Record<string, unknown>): Promise<Msg | undefined> {
   const base = { model: p.model, messages, temperature: 0.2, ...extra };
+  const tuned: Record<string, unknown> = p.tune ? p.tune(base) : base;
+  delete tuned.max_out;
   const r = await fetch(p.url, {
     method: 'POST',
     headers: { authorization: `Bearer ${p.key}`, 'content-type': 'application/json', ...(p.headers ?? {}) },
-    body: JSON.stringify(p.tune ? p.tune(base) : base),
+    body: JSON.stringify(tuned),
   });
   const raw = await r.json().catch(() => ({}));
   const body = (Array.isArray(raw) ? raw[0] : raw) as { choices?: { message: Msg }[]; error?: { message?: string } };
@@ -274,7 +320,7 @@ async function callOnce(env: Env, p: Provider, messages: Msg[], extra: Record<st
   // a model without a thinking switch rejects reasoning_effort: remember and retry without it
   if (r.status === 400 && p.name === 'Groq' && /reasoning/i.test(message) && !env.__noReasoningParam) {
     env.__noReasoningParam = true;
-    return callOnce(env, providers(env).find((x) => x.name === 'Groq')!, messages, extra);
+    return callOnce(env, { ...providers(env).find((x) => x.name === 'Groq')!, model: p.model }, messages, extra);
   }
   if (!r.ok) throw new Error(`${p.name}: ${message}`);
   const msg = body.choices?.[0]?.message;
@@ -293,14 +339,19 @@ export async function onRequestPost({ request, env }: Ctx): Promise<Response> {
   const pr = await asUser(env, token, `profiles?id=eq.${user.id}&select=pro_until,is_admin`);
   const prof = ((await pr.json().catch(() => [])) as { pro_until: string | null; is_admin: boolean }[])[0];
   const isPro = !!prof && (prof.is_admin || (!!prof.pro_until && new Date(prof.pro_until) > new Date()));
-  if (!isPro) return json({ error: 'The AI assistant is part of NetLab Pro.', code: 'pro' }, 402);
+  const mode: 'build' | 'guide' = isPro ? 'build' : 'guide';
 
-  const limit = Number(env.AI_DAILY_LIMIT || 150);
-  const ur = await asUser(env, token, 'rpc/bump_my_ai_usage', { method: 'POST', body: '{}' });
-  const used = Number(await ur.json().catch(() => 0));
-  if (!prof.is_admin && used > limit) return json({ error: `You've used today's ${limit} AI requests. The limit resets at 8am Malaysia time.`, code: 'limit' }, 429);
-
-  let body: { prompt?: string; topology?: unknown; history?: { role: 'user' | 'assistant'; content: string }[] };
+  let body: {
+    prompt?: string;
+    topology?: unknown;
+    history?: { role: 'user' | 'assistant'; content: string }[];
+    /** Pictures as data URLs, and text read from attached documents. */
+    attachments?: { images?: string[]; text?: string; names?: string[] };
+    /** Problems found when the previous plan was tried in a test copy. */
+    check?: string;
+    /** The previous plan's actions (JSON), for a correction round. */
+    previous?: string;
+  };
   try {
     body = await request.json();
   } catch {
@@ -308,25 +359,50 @@ export async function onRequestPost({ request, env }: Ctx): Promise<Response> {
   }
   const prompt = String(body.prompt || '').slice(0, 4000);
   if (!prompt.trim()) return json({ error: 'Type a question or a task first.' }, 400);
+  const images = (body.attachments?.images ?? []).filter((u) => typeof u === 'string' && /^data:image\/(png|jpe?g|webp);base64,/.test(u) && u.length < 4_000_000).slice(0, 3);
+  const docText = String(body.attachments?.text ?? '').slice(0, 12000);
+  const names = (body.attachments?.names ?? []).map(String).slice(0, 8);
+  if (!isPro && (images.length || docText)) return json({ error: 'Reading lab sheets and pictures is part of NetLab Pro. Your free plan can still ask questions and get guided steps.', code: 'pro' }, 402);
+  const fixing = isPro && !!body.check;
+
+  // usage: a correction round is part of the same request, so it isn't counted again
+  const limit = isPro ? Number(env.AI_DAILY_LIMIT || 150) : Number(env.AI_FREE_DAILY_LIMIT || 20);
+  let used = 0;
+  if (!fixing) {
+    const ur = await asUser(env, token, 'rpc/bump_my_ai_usage', { method: 'POST', body: '{}' });
+    used = Number(await ur.json().catch(() => 0));
+    if (!prof?.is_admin && used > limit)
+      return json({ error: isPro ? `You've used today's ${limit} AI requests. The limit resets at 8am Malaysia time.` : `You've used today's ${limit} free AI questions. They reset at 8am Malaysia time, or get Pro for more and for automatic setup.`, code: 'limit' }, 429);
+  }
+
   // The model catalogue is only needed when devices may be added; leaving it out keeps
   // requests inside the provider's tokens-per-minute limit.
   const t = { ...((body.topology ?? {}) as Record<string, unknown>) };
   const devCount = Array.isArray(t.devices) ? t.devices.length : 0;
-  if (devCount >= 2 && !/\b(add|build|create|new|lab|design|more|extra|another)\b/i.test(prompt)) delete t.availableModels;
+  if (devCount >= 2 && !images.length && !docText && !/\b(add|build|create|new|lab|design|more|extra|another|setup|set up)\b/i.test(prompt)) delete t.availableModels;
   const topo = JSON.stringify(t).slice(0, 40000);
   const history = (body.history || []).slice(-4).map((h) => ({ role: h.role === 'assistant' ? 'assistant' : 'user', content: String(h.content).slice(0, 1500) }));
 
-  const messages: Msg[] = [
-    { role: 'system', content: SYSTEM },
-    ...history,
-    { role: 'user', content: `Current topology:\n${topo}\n\nRequest: ${prompt}` },
-  ];
+  let text = `Current topology:\n${topo}\n\n`;
+  if (docText) text += `Attached documents${names.length ? ` (${names.join(', ')})` : ''}:\n"""\n${docText}\n"""\n\n`;
+  if (images.length) text += `${images.length} attached picture${images.length > 1 ? 's' : ''}${names.length ? ` from ${names.join(', ')}` : ''} follow. Read every label, port name and address in them.\n\n`;
+  text += `Request: ${prompt}`;
+  if (fixing) {
+    text +=
+      `\n\nYou already answered this once. Your plan was tried on a test copy of the network and these problems were found:\n${String(body.check).slice(0, 4000)}\n\n` +
+      `Your previous actions were:\n${String(body.previous ?? '').slice(0, 12000)}\n\n` +
+      `Send the complete corrected plan: every action needed starting from the current topology above (not only the changes), with the problems fixed.`;
+  }
+  const userContent: string | Part[] = images.length ? [{ type: 'text', text }, ...images.map((url) => ({ type: 'image_url' as const, image_url: { url } }))] : text;
+
+  const messages: Msg[] = [{ role: 'system', content: mode === 'build' ? SYSTEM_BUILD : SYSTEM_GUIDE }, ...history, { role: 'user', content: userContent }];
+  const maxOut = mode === 'build' ? 4096 : 2048;
 
   try {
     let final: Msg | undefined;
     const budget: Budget = { waited: 0 };
     for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
-      const msg = await chat(env, messages, round < MAX_TOOL_ROUNDS ? { tools: TOOLS, tool_choice: 'auto' } : {}, budget);
+      const msg = await chat(env, messages, round < MAX_TOOL_ROUNDS ? { tools: TOOLS, tool_choice: 'auto', max_out: maxOut } : { max_out: maxOut }, budget);
       if (!msg) throw new Error('The model returned no answer.');
       if (msg.tool_calls?.length) {
         messages.push({ role: 'assistant', content: msg.content ?? '', tool_calls: msg.tool_calls });
@@ -336,20 +412,23 @@ export async function onRequestPost({ request, env }: Ctx): Promise<Response> {
       final = msg;
       break;
     }
-    let out = final?.content ? extractJson(final.content) : null;
+    const finalText = typeof final?.content === 'string' ? final.content : '';
+    let out = finalText ? extractJson(finalText) : null;
     if (!out) {
       // Ask once more, in JSON mode, to restate the answer in the required shape.
-      messages.push({ role: 'assistant', content: final?.content ?? '' });
+      messages.push({ role: 'assistant', content: finalText });
       messages.push({ role: 'user', content: 'Restate your final answer as the required JSON object only.' });
-      const fix = await chat(env, messages, { response_format: { type: 'json_object' } }, budget);
-      out = fix?.content ? extractJson(fix.content) : null;
+      const fix = await chat(env, messages, { response_format: { type: 'json_object' }, max_out: maxOut }, budget);
+      out = typeof fix?.content === 'string' ? extractJson(fix.content) : null;
     }
     if (!out) return json({ error: 'The AI answer could not be read. Try asking again in a different way.' }, 424);
     return json({
+      mode,
       reply: String(out.reply ?? ''),
       subnets: Array.isArray(out.subnets) ? out.subnets.slice(0, 64) : [],
-      actions: Array.isArray(out.actions) ? out.actions.slice(0, 200) : [],
-      usage: { used, limit },
+      actions: mode === 'build' && Array.isArray(out.actions) ? out.actions.slice(0, 300) : [],
+      steps: mode === 'guide' && Array.isArray(out.steps) ? out.steps.slice(0, 60) : [],
+      usage: fixing ? undefined : { used, limit },
       provider: budget.used,
     });
   } catch (e) {

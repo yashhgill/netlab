@@ -106,6 +106,9 @@ export function applyActions(
 ): ActionResult[] {
   const results: ActionResult[] = [];
   let added = 0;
+  const fresh: Device[] = [];
+  const below = engine.devices.size ? Math.max(...[...engine.devices.values()].map((d) => d.y)) + 190 : 140;
+  const left = engine.devices.size ? Math.min(...[...engine.devices.values()].map((d) => d.x)) : 160;
   for (const a of actions) {
     try {
       results.push(applyOne(a));
@@ -113,6 +116,7 @@ export function applyActions(
       results.push({ ok: false, message: `${describeAction(a)}: ${(e as Error).message}` });
     }
   }
+  if (fresh.length) arrange(engine, fresh, left, below);
   engine.refreshAll();
   engine.bump();
   return results;
@@ -125,6 +129,7 @@ export function applyActions(
         const spot = nextSpot(engine, added++);
         const d = createDevice(engine, a.kind, spot.x, spot.y, model);
         if (a.name && /^[A-Za-z][\w-]{0,30}$/.test(a.name)) d.hostname = a.name;
+        fresh.push(d);
         return { ok: true, message: `Added ${d.hostname} (${d.model})` };
       }
       case 'connect': {
@@ -183,5 +188,42 @@ export function applyActions(
         return { ok: true, message: `${d.hostname} is asking for an address by DHCP` };
       }
     }
+  }
+}
+
+const TIER: Record<string, number> = { router: 0, l3switch: 1, switch: 1, hub: 1, ap: 1 };
+const tierOf = (d: Device) => TIER[d.kind] ?? 2;
+
+/**
+ * Lay new devices out as a tidy tree: routers on top, switches and access points under the
+ * router they connect to, end devices under their switch. Existing devices don't move.
+ */
+export function arrange(engine: Engine, fresh: Device[], left: number, top: number) {
+  const isNew = new Set(fresh.map((d) => d.id));
+  const neighbours = (d: Device) => d.allPorts().map((p) => engine.peer(d.id, p.name)?.dev).filter((x): x is string => !!x).map((id) => engine.devices.get(id)!).filter(Boolean);
+  const parent = new Map<string, Device>();
+  for (const d of fresh) {
+    const t = tierOf(d);
+    const up = neighbours(d).filter((n) => tierOf(n) < t && isNew.has(n.id)).sort((a, b) => tierOf(b) - tierOf(a))[0];
+    if (up) parent.set(d.id, up);
+  }
+  const kids = (d: Device) => fresh.filter((k) => parent.get(k.id) === d);
+  const roots = fresh.filter((d) => !parent.has(d.id)).sort((a, b) => tierOf(a) - tierOf(b));
+  const SLOT = 120;
+  const width = (d: Device): number => Math.max(1, kids(d).reduce((n, k) => n + width(k), 0));
+  let x = left;
+  const place = (d: Device, x0: number, depth: number) => {
+    const w = width(d);
+    d.x = Math.round(x0 + (w * SLOT) / 2);
+    d.y = Math.round(top + depth * 170);
+    let cx = x0;
+    for (const k of kids(d)) {
+      place(k, cx, depth + Math.max(1, tierOf(k) - tierOf(d)));
+      cx += width(k) * SLOT;
+    }
+  };
+  for (const r of roots) {
+    place(r, x, tierOf(r));
+    x += width(r) * SLOT + 40;
   }
 }

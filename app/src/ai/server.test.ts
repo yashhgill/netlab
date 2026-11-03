@@ -40,12 +40,54 @@ const req = (token: string, body: unknown) =>
 afterEach(() => vi.unstubAllGlobals());
 
 describe('/api/ai', () => {
-  it('rejects anonymous and free users', async () => {
+  it('rejects anonymous users', async () => {
     mockFetch({ pro_until: null, is_admin: false }, []);
     expect((await onRequestPost({ request: req('bad', { prompt: 'hi' }), env })).status).toBe(401);
-    const r = await onRequestPost({ request: req('good', { prompt: 'hi' }), env });
+  });
+
+  it('gives free users guided steps, never actions', async () => {
+    const calls = mockFetch({ pro_until: null, is_admin: false }, [
+      {
+        role: 'assistant',
+        content: '{"reply":"Here is how.","subnets":[],"steps":[{"title":"Set R1 g0/0","device":"R1","where":"cli","commands":["enable","configure terminal"]}],"actions":[{"type":"host_dhcp","device":"PC0"}]}',
+      },
+    ]);
+    const r = await onRequestPost({ request: req('good', { prompt: 'how do I address R1?' }), env });
+    expect(r.status).toBe(200);
+    const body = await r.json();
+    expect(body.mode).toBe('guide');
+    expect(body.steps).toHaveLength(1);
+    expect(body.actions).toEqual([]);
+    expect(body.usage).toEqual({ used: 3, limit: 20 });
+    expect(calls[0].messages[0].content).toContain('NetLab tutor');
+  });
+
+  it('keeps lab sheets and pictures for Pro', async () => {
+    mockFetch({ pro_until: null, is_admin: false }, []);
+    const r = await onRequestPost({ request: req('good', { prompt: 'build this', attachments: { text: 'R1 g0/0 192.168.1.1/24' } }), env });
     expect(r.status).toBe(402);
     expect((await r.json()).code).toBe('pro');
+  });
+
+  it('sends pictures to a provider that can read them and skips one that cannot', async () => {
+    const calls = mockFetch({ pro_until: null, is_admin: true }, [{ role: 'assistant', content: '{"reply":"Built.","subnets":[],"actions":[]}' }]);
+    const img = 'data:image/png;base64,iVBORw0KGgo=';
+    const r = await onRequestPost({
+      request: req('good', { prompt: 'build the lab in this picture', attachments: { images: [img], names: ['lab.png'] } }),
+      env: { ...env, CEREBRAS_API_KEY: 'c' },
+    });
+    expect(r.status).toBe(200);
+    const user = calls[0].messages.find((m) => m.role === 'user') as unknown as { content: { type: string }[] };
+    expect(Array.isArray(user.content)).toBe(true);
+    expect(user.content.map((p) => p.type)).toEqual(['text', 'image_url']);
+  });
+
+  it('a correction round is not counted as another request', async () => {
+    const f = mockFetch({ pro_until: null, is_admin: true }, [{ role: 'assistant', content: '{"reply":"Fixed.","subnets":[],"actions":[]}' }]);
+    const r = await onRequestPost({ request: req('good', { prompt: 'build', check: 'PC1 cannot ping its gateway', previous: '[]' }), env });
+    const body = await r.json();
+    expect(body.usage).toBeUndefined();
+    expect(f[0].messages.at(-1)!.content).toContain('PC1 cannot ping its gateway');
   });
 
   it('runs the VLSM tool and returns the parsed plan', async () => {

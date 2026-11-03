@@ -18,9 +18,6 @@ export const DUITNOW = {
   name: (import.meta.env.VITE_DUITNOW_NAME as string | undefined) ?? 'HarNova Technology',
 };
 
-/** Google sign-in shows only once the provider is switched on in Supabase. */
-export const GOOGLE_ENABLED = import.meta.env.VITE_GOOGLE_AUTH === '1';
-
 /** Payment details the admin sets from the Admin panel (stored in Supabase). */
 export interface PaymentSettings {
   name: string;
@@ -52,7 +49,7 @@ export async function savePaymentSettings(v: PaymentSettings): Promise<string | 
   return error ? error.message : null;
 }
 
-export const supabase: SupabaseClient | null = URL && KEY ? createClient(URL, KEY, { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true } }) : null;
+export const supabase: SupabaseClient | null = URL && KEY ? createClient(URL, KEY, { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false } }) : null;
 
 export const accountsEnabled = !!supabase;
 
@@ -79,7 +76,7 @@ interface AccountState {
   ready: boolean;
   session: Session | null;
   profile: Profile | null;
-  dialog: 'signin' | 'upgrade' | 'admin' | 'newpassword' | null;
+  dialog: 'signin' | 'upgrade' | 'admin' | null;
 }
 
 let state: AccountState = { ready: !supabase, session: null, profile: null, dialog: null };
@@ -126,52 +123,41 @@ if (supabase) {
   supabase.auth.onAuthStateChange((e, session) => {
     set({ session });
     refreshProfile();
-    if (e === 'PASSWORD_RECOVERY') set({ dialog: 'newpassword' });
-    else if (session && state.dialog === 'signin') set({ dialog: null });
+    if (e === 'SIGNED_IN' && session && state.dialog === 'signin') set({ dialog: null });
   });
 }
 
-function redirectTo() {
-  return `${location.origin}${location.pathname}`;
+/** Friendlier wording for the errors Supabase returns while signing in. */
+function authError(msg: string): string {
+  if (/rate limit|too many|security purposes|only request this after/i.test(msg)) return 'Too many codes were asked for. Wait a minute, then try again.';
+  if (/expired|invalid|token/i.test(msg)) return 'That code is wrong or has expired. Check the latest email, or ask for a new code.';
+  if (/signups? not allowed/i.test(msg)) return 'New accounts are switched off right now.';
+  if (/error sending|smtp|email/i.test(msg)) return 'The sign-in email could not be sent. Try again in a few minutes.';
+  return msg;
 }
 
-export async function signInWithEmail(email: string): Promise<string | null> {
+/**
+ * Step 1 of signing in: email a one-time code. New emails get an account automatically.
+ * The email holds only the code (no link), so it works the same on any device.
+ */
+export async function sendSignInCode(email: string): Promise<string | null> {
   if (!supabase) return 'Accounts are not set up on this copy of NetLab.';
-  const { error } = await supabase.auth.signInWithOtp({ email, options: { emailRedirectTo: redirectTo() } });
-  return error ? error.message : null;
+  const { error } = await supabase.auth.signInWithOtp({ email: email.trim().toLowerCase(), options: { shouldCreateUser: true } });
+  return error ? authError(error.message) : null;
 }
 
-export async function signUpWithPassword(email: string, password: string): Promise<{ error: string | null; confirm: boolean }> {
-  if (!supabase) return { error: 'Accounts are not set up on this copy of NetLab.', confirm: false };
-  const { data, error } = await supabase.auth.signUp({ email, password, options: { emailRedirectTo: redirectTo() } });
-  if (error) return { error: error.message, confirm: false };
-  // no session means Supabase wants the email confirmed first
-  return { error: null, confirm: !data.session };
-}
-
-export async function signInWithPassword(email: string, password: string): Promise<string | null> {
+/** Step 2: check the code from the email. A new account's first code arrives as a sign-up confirmation. */
+export async function verifySignInCode(email: string, code: string): Promise<string | null> {
   if (!supabase) return 'Accounts are not set up on this copy of NetLab.';
-  const { error } = await supabase.auth.signInWithPassword({ email, password });
-  if (!error) return null;
-  return /invalid login/i.test(error.message) ? 'That email and password don\'t match. Check them, or create an account.' : error.message;
-}
-
-export async function sendPasswordReset(email: string): Promise<string | null> {
-  if (!supabase) return 'Accounts are not set up on this copy of NetLab.';
-  const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo: redirectTo() });
-  return error ? error.message : null;
-}
-
-export async function setNewPassword(password: string): Promise<string | null> {
-  if (!supabase) return 'Not configured';
-  const { error } = await supabase.auth.updateUser({ password });
-  return error ? error.message : null;
-}
-
-export async function signInWithGoogle(): Promise<string | null> {
-  if (!supabase) return 'Accounts are not set up on this copy of NetLab.';
-  const { error } = await supabase.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: redirectTo() } });
-  return error ? error.message : null;
+  const e = email.trim().toLowerCase();
+  const token = code.replace(/\D/g, '');
+  let { error } = await supabase.auth.verifyOtp({ email: e, token, type: 'email' });
+  if (error && /expired|invalid/i.test(error.message)) {
+    // codes sent to a brand-new address are sign-up confirmations
+    const r = await supabase.auth.verifyOtp({ email: e, token, type: 'signup' });
+    if (!r.error) error = null;
+  }
+  return error ? authError(error.message) : null;
 }
 
 export async function signOut() {
@@ -226,6 +212,26 @@ export async function adminSetPro(id: string, until: string | null): Promise<str
   if (!supabase) return 'Not configured';
   const { error } = await supabase.rpc('set_pro_until', { target: id, until });
   return error ? error.message : null;
+}
+
+/** Give Pro to an email until a date (null removes it). Works before the person has signed up. */
+export async function adminGrantPro(email: string, until: string | null, note?: string): Promise<{ error: string | null; result?: string }> {
+  if (!supabase) return { error: 'Not configured' };
+  const { data, error } = await supabase.rpc('grant_pro_by_email', { target_email: email, until, note: note ?? null });
+  return error ? { error: /function .*does not exist|schema cache/i.test(error.message) ? 'Run supabase/migrations/0004_pro_grants.sql in Supabase first.' : error.message } : { error: null, result: String(data) };
+}
+
+export interface ProGrant {
+  email: string;
+  pro_until: string;
+  note: string | null;
+}
+
+/** Pro grants waiting for people who haven't signed up yet. */
+export async function adminGrants(): Promise<ProGrant[]> {
+  if (!supabase) return [];
+  const { data } = await supabase.from('pro_grants').select('email,pro_until,note').order('created_at', { ascending: false }).limit(50);
+  return (data as ProGrant[]) ?? [];
 }
 
 export async function accessToken(): Promise<string | null> {
