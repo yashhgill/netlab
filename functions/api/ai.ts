@@ -47,7 +47,7 @@ interface Ctx {
 const DEFAULT_MODEL = 'qwen/qwen3.8-27b';
 const MAX_TOOL_ROUNDS = 3;
 /** Longest total time to wait out the provider's per-minute limits within one request. */
-const MAX_RATE_WAIT_MS = 30000;
+const MAX_RATE_WAIT_MS = 65000;
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } });

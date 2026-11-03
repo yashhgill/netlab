@@ -232,7 +232,9 @@ function Chat({ onCalc }: { onCalc: () => void }) {
     try {
       const topology = describeTopology(engine);
       const payload = { prompt, topology, history, attachments: att ?? undefined };
-      const r = await ask(payload);
+      // the free AI plans allow a few requests a minute; say so while the server waits for a slot
+      const slow = setTimeout(() => update(reply.id, { status: 'The free AI is busy. Waiting for a free slot (up to a minute)…' }), 12000);
+      const r = await ask(payload).finally(() => clearTimeout(slow));
       if (!r.ok) return fail(r.status, r.body);
       if (r.body.usage) setUsage(r.body.usage);
       if (r.body.mode === 'guide') {
