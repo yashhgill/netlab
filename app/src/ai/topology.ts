@@ -22,7 +22,7 @@ export function describeTopology(engine: Engine) {
       ...(l.dce ? { dce: l.dce === 'a' ? name(l.a.dev) : name(l.b.dev) } : {}),
     })),
     // one short line per model keeps the request small (the AI provider limits tokens per minute)
-    availableModels: MODELS.map((m) => `${m.id} ${m.kind}: ${m.detail}`),
+    availableModels: MODELS.map((m) => `${m.id} ${m.kind}${m.pt?.length ? ` (Packet Tracer ${m.pt.slice(0, 2).join('/')})` : ''}: ${m.detail}`),
   };
 }
 

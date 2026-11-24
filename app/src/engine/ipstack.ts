@@ -1,4 +1,5 @@
 import { BCAST_IP, BCAST_MAC, broadcastOf, network, sameSubnet } from './addr';
+import { ospfFor } from './ospf';
 import type { Device } from './engine';
 import type { Frame, IcmpPacket, IpPacket } from './packets';
 
@@ -18,7 +19,7 @@ export interface StackHost {
   l2send(ifName: string, frame: Frame): void;
 }
 
-export type RouteCode = 'C' | 'L' | 'S' | 'S*';
+export type RouteCode = 'C' | 'L' | 'S' | 'S*' | 'O' | 'O*E2';
 
 export interface Route {
   code: RouteCode;
@@ -145,6 +146,15 @@ export class IpStack {
         ad: s.ad,
         metric: 0,
       });
+    }
+    // routes learned by OSPF (administrative distance 110: a static route to the same prefix wins)
+    if (this.forwarding && (this.host.dev as unknown as { ospf?: unknown }).ospf && this.engine) {
+      for (const r of ospfFor(this.engine, this.host.dev.id)?.routes ?? []) {
+        const same = out.find((x) => x.net === r.net && x.mask === r.mask);
+        if (same && same.ad <= r.ad) continue;
+        if (same) out.splice(out.indexOf(same), 1);
+        out.push(r);
+      }
     }
     if (!this.forwarding && this.defaultGateway !== undefined) {
       const ok = connected.some((r) => r.code === 'C' && sameSubnet(r.net, this.defaultGateway!, r.mask));

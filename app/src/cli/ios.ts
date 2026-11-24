@@ -1,4 +1,5 @@
 import { fmtIp, isValidMask, network } from '../engine/addr';
+import { ospfFor, showIpOspfInterfaceBrief, showIpOspfNeighbor, showIpProtocols } from '../engine/ospf';
 import type { Iface } from '../engine/engine';
 import { IosState } from '../engine/devices/ios-state';
 import { Router } from '../engine/devices/router';
@@ -25,7 +26,7 @@ import {
 import { CommandTree, compile, type Args } from './parser';
 import { ShellBase, type Shell } from './shell';
 
-type Mode = 'boot' | 'user' | 'exec' | 'config' | 'if' | 'subif' | 'range' | 'line' | 'dhcp' | 'vlan';
+type Mode = 'boot' | 'user' | 'exec' | 'config' | 'if' | 'subif' | 'range' | 'line' | 'dhcp' | 'vlan' | 'ospf';
 
 type Await =
   | { kind: 'enable'; tries: number }
@@ -34,6 +35,18 @@ type Await =
   | { kind: 'copy' };
 
 const HELP: Record<string, string> = {
+  ospf: 'Open Shortest Path First (OSPF)',
+  area: 'Set the OSPF area ID',
+  'router-id': 'router-id for this OSPF process',
+  'passive-interface': 'Suppress routing updates on an interface',
+  'default-information': 'Control distribution of default information',
+  originate: 'Distribute a default route',
+  'auto-cost': 'Calculate OSPF interface cost according to bandwidth',
+  'reference-bandwidth': 'Use reference bandwidth method to assign OSPF cost',
+  'log-adjacency-changes': 'Log changes in adjacency state',
+  cost: 'Interface cost',
+  neighbor: 'Neighbor list',
+  protocols: 'IP routing protocol process parameters and statistics',
   cdp: 'CDP information',
   neighbors: 'CDP neighbor entries',
   controllers: 'Interface controller status',
@@ -188,6 +201,9 @@ EXEC.add(t('show vlan'), (s) => s.write(showVlanBrief(s.dev as Switch)), isSw);
 EXEC.add(t('show vlan brief'), (s) => s.write(showVlanBrief(s.dev as Switch)), isSw);
 EXEC.add(t('show mac address-table'), (s) => s.write(showMacTable(s.dev as Switch)), isSw);
 EXEC.add(t('show mac-address-table'), (s) => s.write(showMacTable(s.dev as Switch)), isSw);
+EXEC.add(t('show ip ospf neighbor'), (s) => s.write(showIpOspfNeighbor(ospfFor(s.dev.engine, s.dev.id))), isR);
+EXEC.add(t('show ip ospf interface brief'), (s) => s.write(showIpOspfInterfaceBrief(ospfFor(s.dev.engine, s.dev.id), (s.dev as Router).ospf?.pid ?? 1)), isR);
+EXEC.add(t('show ip protocols'), (s) => s.write(showIpProtocols((s.dev as Router).ospf, ospfFor(s.dev.engine, s.dev.id))), isR);
 EXEC.add(t('show ip dhcp binding'), (s) => s.write(showDhcpBinding(s.dev as Router)), isR);
 EXEC.add(t('show ip dhcp pool'), (s) => s.write(showDhcpPool(s.dev as Router)), isR);
 EXEC.add(t('show cdp neighbors'), (s) => s.write(showCdpNeighbors(s.dev)));
@@ -266,6 +282,16 @@ CONF.add(t('ip domain-name {word:name}'), (s, a) => (s.dev.ios.domainName = a.na
 CONF.add(t('no ip domain-name'), (s) => (s.dev.ios.domainName = undefined));
 CONF.add(t('ip default-gateway {ip:gw}'), (s, a) => (s.dev.stack.defaultGateway = a.gw), isSw);
 CONF.add(t('no ip default-gateway'), (s) => (s.dev.stack.defaultGateway = undefined), isSw);
+CONF.add(t('router ospf {num:pid:1-65535}'), (s, a) => {
+  const r = s.dev as Router;
+  if (r.ospf && r.ospf.pid !== a.pid) return s.write(`% OSPF process ${r.ospf.pid} is already running. NetLab runs one OSPF process per router.\n`);
+  if (!r.ospf) r.ospf = { pid: a.pid, networks: [], passive: [] };
+  s.mode = 'ospf';
+}, isR);
+CONF.add(t('no router ospf {num:pid:1-65535}'), (s) => {
+  (s.dev as Router).ospf = undefined;
+  s.dev.engine.bump();
+}, isR);
 CONF.add(t('ip dhcp pool {word:name}'), (s, a) => {
   const r = s.dev as Router;
   if (!r.dhcp.pools.find((p) => p.name === a.name)) r.dhcp.pools.push({ name: a.name });
@@ -406,6 +432,8 @@ IF.add(t('no clock rate'), (s) => s.eachIf((i) => (i.clockRate = undefined)), se
 IF.add(t('encapsulation ppp'), (s) => s.eachIf((i) => (i.encap = 'ppp')), serial);
 IF.add(t('encapsulation hdlc'), (s) => s.eachIf((i) => (i.encap = 'hdlc')), serial);
 IF.add(t('bandwidth {num:kbps:1-10000000}'), (s, a) => s.eachIf((i) => (i.bandwidth = a.kbps)));
+IF.add(t('ip ospf cost {num:cost:1-65535}'), (s, a) => s.eachIf((i) => (i.ospfCost = a.cost)), isR);
+IF.add(t('no ip ospf cost'), (s) => s.eachIf((i) => (i.ospfCost = undefined)), isR);
 IF.add(t('no bandwidth'), (s) => s.eachIf((i) => (i.bandwidth = undefined)));
 IF.add(t('spanning-tree portfast'), () => {}, swPort);
 
@@ -465,6 +493,51 @@ VLAN.add(t('no name'), (s) => {
   for (const v of s.vlanIds) (s.dev as Switch).vlans.set(v, `VLAN${String(v).padStart(4, '0')}`);
 });
 
+// ------------------------------------------------------------------ OSPF
+const ospfOf = (s: IosSession) => (s.dev as Router).ospf!;
+const OSPF = new CommandTree<IosSession>();
+OSPF.add(t('end'), (s) => s.endConfig());
+OSPF.add(t('exit'), (s) => (s.mode = 'config'));
+OSPF.add(t('do {line:cmd}'), (s, a) => s.runExec(a.cmd));
+OSPF.add(t('network {ip:net} {ip:wild} area {num:area:0-4294967295}'), (s, a) => {
+  const c = ospfOf(s);
+  const n = { net: (a.net & ~a.wild) >>> 0, wildcard: a.wild >>> 0, area: a.area };
+  if (!c.networks.some((x) => x.net === n.net && x.wildcard === n.wildcard)) c.networks.push(n);
+  else c.networks = c.networks.map((x) => (x.net === n.net && x.wildcard === n.wildcard ? n : x));
+});
+OSPF.add(t('no network {ip:net} {ip:wild} area {num:area:0-4294967295}'), (s, a) => {
+  const c = ospfOf(s);
+  c.networks = c.networks.filter((x) => !(x.net === ((a.net & ~a.wild) >>> 0) && x.wildcard === a.wild >>> 0));
+});
+OSPF.add(t('router-id {ip:rid}'), (s, a) => {
+  ospfOf(s).routerId = a.rid;
+  s.write('Reload or use "clear ip ospf process" command, for this to take effect\n');
+});
+OSPF.add(t('no router-id'), (s) => (ospfOf(s).routerId = undefined));
+OSPF.add(t('passive-interface default'), (s) => {
+  ospfOf(s).passiveDefault = true;
+  ospfOf(s).passive = [];
+});
+OSPF.add(t('no passive-interface default'), (s) => {
+  ospfOf(s).passiveDefault = false;
+  ospfOf(s).passive = [];
+});
+OSPF.add(t('passive-interface {iface:ifn}'), (s, a) => {
+  if (!s.dev.ifaces.has(a.ifn)) return s.invalidAt(a.ifn);
+  const c = ospfOf(s);
+  c.passive = c.passiveDefault ? c.passive.filter((x) => x !== a.ifn) : [...new Set([...c.passive, a.ifn])];
+});
+OSPF.add(t('no passive-interface {iface:ifn}'), (s, a) => {
+  if (!s.dev.ifaces.has(a.ifn)) return s.invalidAt(a.ifn);
+  const c = ospfOf(s);
+  c.passive = c.passiveDefault ? [...new Set([...c.passive, a.ifn])] : c.passive.filter((x) => x !== a.ifn);
+});
+OSPF.add(t('default-information originate'), (s) => (ospfOf(s).defaultOriginate = true));
+OSPF.add(t('no default-information originate'), (s) => (ospfOf(s).defaultOriginate = false));
+OSPF.add(t('auto-cost reference-bandwidth {num:mbps:1-4294967}'), (s, a) => (ospfOf(s).referenceBandwidth = a.mbps === 100 ? undefined : a.mbps));
+OSPF.add(t('log-adjacency-changes'), () => {});
+OSPF.add(t('log-adjacency-changes detail'), () => {});
+
 const TREES: Record<Mode, CommandTree<IosSession> | null> = {
   boot: null,
   user: EXEC,
@@ -476,6 +549,7 @@ const TREES: Record<Mode, CommandTree<IosSession> | null> = {
   line: LINE,
   dhcp: DHCP,
   vlan: VLAN,
+  ospf: OSPF,
 };
 
 // ------------------------------------------------------------------ SESSION
@@ -529,6 +603,8 @@ export class IosSession extends ShellBase implements Shell {
         return `${h}(dhcp-config)#`;
       case 'vlan':
         return `${h}(config-vlan)#`;
+      case 'ospf':
+        return `${h}(config-router)#`;
     }
   }
 

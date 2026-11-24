@@ -1,4 +1,5 @@
 import { classfulMask, fmtIp, fmtMacDot, maskToPrefix, network } from '../engine/addr';
+import { ospfConfigLines } from '../engine/ospf';
 import type { Iface } from '../engine/engine';
 import { Router } from '../engine/devices/router';
 import { Switch } from '../engine/devices/switch';
@@ -63,6 +64,7 @@ export function showIpRoute(d: IosDevice): string {
     const code = r.code.padEnd(indent ? 8 : 5);
     const pfx = `${fmtIp(r.net)}/${maskToPrefix(r.mask)}`;
     if (r.code === 'C' || r.code === 'L') return `${code}${pfx} is directly connected, ${r.ifName}\n`;
+    if (r.code.startsWith('O') && r.nextHop !== undefined) return `${code}${pfx} [${r.ad}/${r.metric}] via ${fmtIp(r.nextHop)}, 00:00:12, ${r.ifName}\n`;
     if (r.nextHop !== undefined) return `${code}${pfx} [${r.ad}/${r.metric}] via ${fmtIp(r.nextHop)}\n`;
     return `${code}${pfx} is directly connected, ${r.ifName}\n`;
   };
@@ -78,7 +80,7 @@ export function showIpRoute(d: IosDevice): string {
     else out += `     ${fmtIp(k)}/${maskToPrefix([...masks][0])} is subnetted, ${rs.length} subnets\n`;
     for (const r of rs) out += fmtRoute(r, true);
   }
-  if (def) out += `S*   0.0.0.0/0 [${def.ad}/0] via ${def.nextHop !== undefined ? fmtIp(def.nextHop) : def.ifName}\n`;
+  if (def) out += `${def.code.padEnd(5)}0.0.0.0/0 [${def.ad}/${def.metric}] via ${def.nextHop !== undefined ? fmtIp(def.nextHop) : def.ifName}${def.code.startsWith('O') ? `, 00:00:12, ${def.ifName}` : ''}\n`;
   return out;
 }
 
@@ -205,6 +207,7 @@ export function ifaceConfig(d: IosDevice, i: Iface): string[] {
     if (i.ip !== undefined) L.push(` ip address ${fmtIp(i.ip)} ${fmtIp(i.mask!)}`);
     else if (!i.parent) L.push(' no ip address');
     if (i.helper !== undefined) L.push(` ip helper-address ${fmtIp(i.helper)}`);
+    if (i.ospfCost) L.push(` ip ospf cost ${i.ospfCost}`);
     if (i.media === 'serial' && i.clockRate) L.push(` clock rate ${i.clockRate}`);
     if (d instanceof Router && i.physical && i.media !== 'serial') L.push(' duplex auto', ' speed auto');
   }
@@ -271,6 +274,7 @@ export function runningConfig(d: IosDevice): string {
   }
   if (d instanceof Switch && d.stack.defaultGateway !== undefined) L.push(`ip default-gateway ${fmtIp(d.stack.defaultGateway)}`, '!');
   if (d instanceof Switch && d.ipRouting) L.push('ip routing', '!');
+  if (d instanceof Router && d.ospf) L.push(...ospfConfigLines(d.ospf));
   if (d instanceof Router || (d instanceof Switch && d.ipRouting)) {
     L.push('ip classless');
     for (const r of d.stack.staticRoutes) {

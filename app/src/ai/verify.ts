@@ -35,7 +35,7 @@ const label = (d: Device) => d.hostname;
 /** Does the request expect every network to reach every other one? */
 export function wantsFullReach(prompt: string, actions: AiAction[]): boolean {
   if (/\b(isolat|separate|block|must not|shouldn'?t|should not|cannot reach|can'?t reach|no access)/i.test(prompt)) return false;
-  if (actions.some((a) => a.type === 'cli' && a.commands.some((c) => /^ip route /i.test(c)))) return true;
+  if (actions.some((a) => a.type === 'cli' && a.commands.some((c) => /^(ip route |router ospf)/i.test(c)))) return true;
   return /\b(rout|ping|reach|communicat|talk|connect|lab|build|whole|every|all|full|set ?up|configure|vlsm|subnet|network|topolog|design|fix)/i.test(prompt);
 }
 

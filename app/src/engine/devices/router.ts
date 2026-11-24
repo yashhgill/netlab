@@ -5,6 +5,7 @@ import { modelSpec } from '../models';
 import { IpStack, type L3If } from '../ipstack';
 import type { Frame } from '../packets';
 import { IosState } from './ios-state';
+import type { OspfConfig } from '../ospf';
 
 export class Router extends Device {
   kind: DeviceKind = 'router';
@@ -12,6 +13,7 @@ export class Router extends Device {
   stack: IpStack;
   dhcp: DhcpServer;
   ios = new IosState();
+  ospf?: OspfConfig;
 
   constructor(id: string, hostname = 'Router', model?: string) {
     super(id, hostname);
@@ -134,6 +136,7 @@ export class Router extends Device {
       routes: this.stack.staticRoutes,
       dhcp: { pools: this.dhcp.pools, excluded: this.dhcp.excluded },
       ios: this.ios.toJSON(),
+      ...(this.ospf ? { ospf: this.ospf } : {}),
     };
   }
 
@@ -148,6 +151,7 @@ export class Router extends Device {
     r.dhcp.pools = j.dhcp?.pools ?? [];
     r.dhcp.excluded = j.dhcp?.excluded ?? [];
     r.ios = IosState.fromJSON(j.ios);
+    if (j.ospf) r.ospf = { passive: [], networks: [], ...j.ospf };
     return r;
   }
 }

@@ -1,4 +1,5 @@
 import { cloneFrame, describeFrame, pduKind, type Frame, type PduKind } from './packets';
+import { ospfFor } from './ospf';
 
 export type DeviceKind = 'pc' | 'laptop' | 'server' | 'printer' | 'phone' | 'tablet' | 'smartphone' | 'tv' | 'switch' | 'l3switch' | 'hub' | 'ap' | 'router';
 export type CableType = 'straight' | 'cross' | 'auto' | 'fiber' | 'serial-dce' | 'serial-dte' | 'console' | 'wireless';
@@ -33,6 +34,8 @@ export interface Iface {
   // switch virtual interface
   sviVlan?: number;
   helper?: number;
+  /** OSPF cost set with "ip ospf cost". */
+  ospfCost?: number;
   linkId?: string;
 }
 
@@ -225,6 +228,12 @@ export class Engine {
   bump() {
     this.version++;
     this.syncWireless();
+    this.touchOspf();
+  }
+
+  /** Let OSPF notice configuration and link changes as they happen (adjacencies start their hello timer now). */
+  touchOspf() {
+    for (const d of this.devices.values()) if ((d as unknown as { ospf?: unknown }).ospf) return void ospfFor(this, d.id);
   }
 
   private syncing = false;
@@ -410,6 +419,7 @@ export class Engine {
 
   refreshAll() {
     for (const d of this.devices.values()) d.refreshLines();
+    this.touchOspf();
   }
 
   // ---------- scheduling ----------
