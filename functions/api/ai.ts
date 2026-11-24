@@ -447,6 +447,8 @@ export async function onRequestPost({ request, env }: Ctx): Promise<Response> {
     });
   } catch (e) {
     const msg = (e as Error).message;
+    if (/invalid api key|invalid_api_key|unauthori[sz]ed|incorrect api key|api key not valid/i.test(msg))
+      return json({ error: 'The AI is switched off for now: its service key on the NetLab server is no longer valid. The NetLab admin needs to put in a new key.' }, 424);
     return json({ error: msg.startsWith('The AI is busy') ? msg : `The AI service had a problem: ${msg}` }, 424);
   }
 }
