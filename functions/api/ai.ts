@@ -529,19 +529,7 @@ export async function onRequestPost({ request, env }: Ctx): Promise<Response> {
   }
 }
 
-export async function onRequestGet({ env, request }: Ctx): Promise<Response> {
-  // TEMPORARY: one tiny Cloudflare call with the subnet tool, to check the open model answers and calls tools
-  if (new URL(request.url).searchParams.get('probe') === 'cf' && env.AI) {
-    const p = providers(env).find((x) => x.binding);
-    if (!p) return json({ error: 'no Cloudflare provider' });
-    try {
-      const t0 = Date.now();
-      const msg = await callOnce(env, p, [{ role: 'system', content: 'Use the subnet_info tool to answer.' }, { role: 'user', content: 'What is the broadcast address of 10.1.5.77/27?' }], { tools: TOOLS, tool_choice: 'auto', max_out: 400 });
-      return json({ ok: true, ms: Date.now() - t0, msg });
-    } catch (e) {
-      return json({ ok: false, error: (e as Error).message });
-    }
-  }
+export async function onRequestGet({ env }: Ctx): Promise<Response> {
   const list = providers(env);
   return json({ ok: true, configured: !!(list.length && env.SUPABASE_URL), providers: list.map((p) => `${p.name} (${p.model})`), model: list[0]?.model ?? null });
 }
