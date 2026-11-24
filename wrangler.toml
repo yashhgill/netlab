@@ -6,8 +6,13 @@ name = "netlab"
 pages_build_output_dir = "./_site"
 compatibility_date = "2026-10-01"
 
+# Workers AI: open models (gpt-oss-120b) on this Cloudflare account. No key needed.
+[ai]
+binding = "AI"
+
 [vars]
-GROQ_MODEL = "qwen/qwen3.8-27b"
+GROQ_MODEL = "openai/gpt-oss-120b"
+GROQ_VISION_MODEL = "qwen/qwen3.8-27b"
 AI_DAILY_LIMIT = "150"
 SUPABASE_URL = "https://mmnkvjifslgmjtkcbpio.supabase.co"
 SUPABASE_ANON_KEY = "sb_publishable_C-MB9w8jXXWB3sNFGjjapw_sfsPQ7UE"

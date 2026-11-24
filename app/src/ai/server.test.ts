@@ -149,3 +149,16 @@ describe('/api/ai', () => {
     expect(JSON.parse(tool!.content!).subnets[0].prefix).toBe(27);
   });
 });
+
+describe('reading Cloudflare Workers AI answers', () => {
+  it('understands every answer shape', async () => {
+    const { readWorkersAi } = await import('../../../functions/api/ai');
+    expect(readWorkersAi({ choices: [{ message: { role: 'assistant', content: 'hi' } }] })?.content).toBe('hi');
+    const a = readWorkersAi({ response: null, tool_calls: [{ name: 'vlsm', arguments: { base: '10.0.0.0/24' } }] })!;
+    expect(a.tool_calls![0].function).toEqual({ name: 'vlsm', arguments: '{"base":"10.0.0.0/24"}' });
+    const b = readWorkersAi({ output: [{ type: 'reasoning' }, { type: 'function_call', call_id: 'c1', name: 'subnet_info', arguments: '{"cidr":"10.0.0.1/30"}' }, { type: 'message', content: [{ type: 'output_text', text: '{"reply":"ok"}' }] }] })!;
+    expect(b.content).toBe('{"reply":"ok"}');
+    expect(b.tool_calls![0]).toEqual({ id: 'c1', type: 'function', function: { name: 'subnet_info', arguments: '{"cidr":"10.0.0.1/30"}' } });
+    expect(readWorkersAi({ response: { reply: 'x' } })!.content).toBe('{"reply":"x"}');
+  });
+});

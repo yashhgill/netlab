@@ -35,6 +35,12 @@ interface Env {
   AI_FREE_DAILY_LIMIT?: string;
   /** Groq model used when pictures are attached (must accept images). */
   GROQ_VISION_MODEL?: string;
+  /** Cloudflare Workers AI binding: open models run on our own Cloudflare account, no key needed. */
+  AI?: { run: (model: string, input: Record<string, unknown>) => Promise<unknown> };
+  /** Workers AI model (an open model). */
+  WORKERS_AI_MODEL?: string;
+  /** Set to "0" to stop using Workers AI. */
+  WORKERS_AI?: string;
   /** Set at runtime when the model doesn't accept reasoning_effort. */
   __noReasoningParam?: boolean;
 }
@@ -44,7 +50,11 @@ interface Ctx {
   env: Env;
 }
 
-const DEFAULT_MODEL = 'qwen/qwen3.8-27b';
+// gpt-oss-120b: strong at networking, and Groq caches the repeated start of each request
+// (instructions and tools), and cached tokens don't count toward the free plan's
+// tokens-per-minute limit. It can't see pictures, so those go to the vision model.
+const DEFAULT_MODEL = 'openai/gpt-oss-120b';
+const DEFAULT_VISION_MODEL = 'qwen/qwen3.8-27b';
 const MAX_TOOL_ROUNDS = 3;
 /** Longest total time to wait out the provider's per-minute limits within one request. */
 const MAX_RATE_WAIT_MS = 65000;
@@ -212,6 +222,8 @@ interface Provider {
   vision: boolean;
   /** Extra request fields this provider understands. */
   tune?: (body: Record<string, unknown>) => Record<string, unknown>;
+  /** Runs through the Workers AI binding instead of an HTTP API. */
+  binding?: boolean;
 }
 
 export function providers(env: Env): Provider[] {
@@ -223,7 +235,23 @@ export function providers(env: Env): Provider[] {
       key: env.GROQ_API_KEY,
       model: env.GROQ_MODEL || DEFAULT_MODEL,
       vision: true,
-      tune: (b) => ({ ...b, max_completion_tokens: (b.max_out as number) ?? 2048, ...(env.__noReasoningParam ? {} : { reasoning_effort: 'none' }) }),
+      tune: (b) => ({
+        ...b,
+        max_completion_tokens: (b.max_out as number) ?? 2048,
+        ...(env.__noReasoningParam ? {} : { reasoning_effort: /gpt-oss/.test(String(b.model)) ? 'low' : 'none' }),
+      }),
+    });
+  // Open model on Cloudflare's own GPUs: no per-minute token cap, and the free plan covers
+  // dozens of lab builds a day. Takes over the moment Groq's minute is used up.
+  if (env.AI && env.WORKERS_AI !== '0')
+    list.push({
+      name: 'Cloudflare',
+      url: '',
+      key: '',
+      model: env.WORKERS_AI_MODEL || '@cf/openai/gpt-oss-120b',
+      vision: false,
+      binding: true,
+      tune: (b) => ({ ...b, max_tokens: (b.max_out as number) ?? 2048, reasoning: { effort: 'low' } }),
     });
   if (env.GEMINI_API_KEY)
     list.push({
@@ -277,7 +305,7 @@ async function chat(env: Env, messages: Msg[], extra: Record<string, unknown>, b
   const pictures = messages.some((m) => Array.isArray(m.content) && m.content.some((p) => p.type === 'image_url'));
   const all = providers(env)
     .filter((p) => !pictures || p.vision)
-    .map((p) => (pictures && p.name === 'Groq' && env.GROQ_VISION_MODEL ? { ...p, model: env.GROQ_VISION_MODEL } : p));
+    .map((p) => (pictures && p.name === 'Groq' ? { ...p, model: env.GROQ_VISION_MODEL || DEFAULT_VISION_MODEL } : p));
   if (!all.length) throw new Error(pictures ? 'No AI provider that can read pictures is set up.' : 'No AI provider is set up.');
   for (;;) {
     const order = budget.prefer ? [...all.filter((p) => p.name === budget.prefer), ...all.filter((p) => p.name !== budget.prefer)] : all;
@@ -317,6 +345,7 @@ async function callOnce(env: Env, p: Provider, messages: Msg[], extra: Record<st
   const tuned: Record<string, unknown> = p.tune ? p.tune(base) : base;
   delete tuned.max_out;
   delete tuned.__retried;
+  if (p.binding) return callWorkersAi(env, p, tuned);
   const r = await fetch(p.url, {
     method: 'POST',
     headers: { authorization: `Bearer ${p.key}`, 'content-type': 'application/json', ...(p.headers ?? {}) },
@@ -340,6 +369,51 @@ async function callOnce(env: Env, p: Provider, messages: Msg[], extra: Record<st
   const msg = body.choices?.[0]?.message;
   if (!msg) throw new Error(`${p.name} returned no answer.`);
   return msg;
+}
+
+/** Read a Workers AI answer, whichever shape it comes in (chat completions, Workers AI, or Responses). */
+export function readWorkersAi(res: unknown): Msg | undefined {
+  const r = res as Record<string, unknown>;
+  const choices = r.choices as { message: Msg }[] | undefined;
+  if (choices?.[0]?.message) return choices[0].message;
+  const toolCall = (t: Record<string, unknown>, i: number) => {
+    const f = (t.function as Record<string, unknown>) ?? t;
+    const args = f.arguments ?? f.parameters ?? {};
+    return { id: String(t.id ?? t.call_id ?? `call_${i}`), type: 'function' as const, function: { name: String(f.name), arguments: typeof args === 'string' ? args : JSON.stringify(args) } };
+  };
+  if (Array.isArray(r.output)) {
+    // Responses API
+    let text = '';
+    const calls: Record<string, unknown>[] = [];
+    for (const item of r.output as Record<string, unknown>[]) {
+      if (item.type === 'message' && Array.isArray(item.content)) for (const c of item.content as Record<string, unknown>[]) if (typeof c.text === 'string') text += c.text;
+      if (item.type === 'function_call') calls.push(item);
+    }
+    return { role: 'assistant', content: text || null, ...(calls.length ? { tool_calls: calls.map(toolCall) } : {}) };
+  }
+  if ('response' in r || 'tool_calls' in r) {
+    const content = typeof r.response === 'string' ? r.response : r.response ? JSON.stringify(r.response) : null;
+    const calls = (r.tool_calls as Record<string, unknown>[] | undefined) ?? [];
+    return { role: 'assistant', content, ...(calls.length ? { tool_calls: calls.map(toolCall) } : {}) };
+  }
+  return undefined;
+}
+
+async function callWorkersAi(env: Env, p: Provider, body: Record<string, unknown>): Promise<Msg | undefined> {
+  const { model, ...input } = body;
+  // Workers AI wants plain-text message contents
+  input.messages = (input.messages as Msg[]).map((m) => ({ ...m, content: typeof m.content === 'string' || m.content == null ? (m.content ?? '') : m.content.map((c) => (c.type === 'text' ? c.text : '')).join('\n') }));
+  try {
+    const res = await env.AI!.run(String(model), input);
+    const msg = readWorkersAi(res);
+    if (!msg) throw new Error('Cloudflare AI returned no answer.');
+    return msg;
+  } catch (e) {
+    const m = (e as Error).message || String(e);
+    // daily free allowance used up, or capacity: let the other providers take it
+    if (/capacity|rate|429|too many/i.test(m) && !/daily|allocation|neurons/i.test(m)) throw new RateLimited(`Cloudflare: ${m}`, p.name);
+    throw new Error(`Cloudflare: ${m}`);
+  }
 }
 
 export async function onRequestPost({ request, env }: Ctx): Promise<Response> {
@@ -410,7 +484,7 @@ export async function onRequestPost({ request, env }: Ctx): Promise<Response> {
   const userContent: string | Part[] = images.length ? [{ type: 'text', text }, ...images.map((url) => ({ type: 'image_url' as const, image_url: { url } }))] : text;
 
   const messages: Msg[] = [{ role: 'system', content: mode === 'build' ? SYSTEM_BUILD : SYSTEM_GUIDE }, ...history, { role: 'user', content: userContent }];
-  const maxOut = mode === 'build' ? 4096 : 2048;
+  const maxOut = mode === 'build' ? 3500 : 1800;
 
   try {
     let final: Msg | undefined;
@@ -453,7 +527,19 @@ export async function onRequestPost({ request, env }: Ctx): Promise<Response> {
   }
 }
 
-export async function onRequestGet({ env }: Ctx): Promise<Response> {
+export async function onRequestGet({ env, request }: Ctx): Promise<Response> {
+  // TEMPORARY: one tiny Cloudflare call with the subnet tool, to check the open model answers and calls tools
+  if (new URL(request.url).searchParams.get('probe') === 'cf' && env.AI) {
+    const p = providers(env).find((x) => x.binding);
+    if (!p) return json({ error: 'no Cloudflare provider' });
+    try {
+      const t0 = Date.now();
+      const msg = await callOnce(env, p, [{ role: 'system', content: 'Use the subnet_info tool to answer.' }, { role: 'user', content: 'What is the broadcast address of 10.1.5.77/27?' }], { tools: TOOLS, tool_choice: 'auto', max_out: 400 });
+      return json({ ok: true, ms: Date.now() - t0, msg });
+    } catch (e) {
+      return json({ ok: false, error: (e as Error).message });
+    }
+  }
   const list = providers(env);
   return json({ ok: true, configured: !!(list.length && env.SUPABASE_URL), providers: list.map((p) => `${p.name} (${p.model})`), model: list[0]?.model ?? null });
 }
