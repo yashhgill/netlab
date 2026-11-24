@@ -129,34 +129,48 @@ if (supabase) {
 
 /** Friendlier wording for the errors Supabase returns while signing in. */
 function authError(msg: string): string {
-  if (/rate limit|too many|security purposes|only request this after/i.test(msg)) return 'Too many codes were asked for. Wait a minute, then try again.';
-  if (/expired|invalid|token/i.test(msg)) return 'That code is wrong or has expired. Check the latest email, or ask for a new code.';
+  if (/invalid login credentials/i.test(msg)) return 'Wrong email or password.';
+  if (/already registered|already been registered|user already exists/i.test(msg)) return 'There is already an account with this email. Sign in instead.';
+  if (/email not confirmed/i.test(msg)) return 'This account still needs email confirmation, which NetLab no longer uses. Ask the NetLab admin to switch off "Confirm email" in Supabase.';
+  if (/password should be|weak password|at least/i.test(msg)) return 'Choose a longer password: at least 8 characters.';
+  if (/rate limit|too many/i.test(msg)) return 'Too many tries. Wait a minute, then try again.';
   if (/signups? not allowed/i.test(msg)) return 'New accounts are switched off right now.';
-  if (/error sending|smtp|email/i.test(msg)) return 'The sign-in email could not be sent. Try again in a few minutes.';
   return msg;
 }
 
-/**
- * Step 1 of signing in: email a one-time code. New emails get an account automatically.
- * The email holds only the code (no link), so it works the same on any device.
- */
-export async function sendSignInCode(email: string): Promise<string | null> {
+export async function signInWithPassword(email: string, password: string): Promise<string | null> {
   if (!supabase) return 'Accounts are not set up on this copy of NetLab.';
-  const { error } = await supabase.auth.signInWithOtp({ email: email.trim().toLowerCase(), options: { shouldCreateUser: true } });
+  const { error } = await supabase.auth.signInWithPassword({ email: email.trim().toLowerCase(), password });
   return error ? authError(error.message) : null;
 }
 
-/** Step 2: check the code from the email. A new account's first code arrives as a sign-up confirmation. */
-export async function verifySignInCode(email: string, code: string): Promise<string | null> {
+/** Create an account and sign straight in. No email is sent. */
+export async function signUpWithPassword(email: string, password: string): Promise<string | null> {
   if (!supabase) return 'Accounts are not set up on this copy of NetLab.';
-  const e = email.trim().toLowerCase();
-  const token = code.replace(/\D/g, '');
-  let { error } = await supabase.auth.verifyOtp({ email: e, token, type: 'email' });
-  if (error && /expired|invalid/i.test(error.message)) {
-    // codes sent to a brand-new address are sign-up confirmations
-    const r = await supabase.auth.verifyOtp({ email: e, token, type: 'signup' });
-    if (!r.error) error = null;
+  const { data, error } = await supabase.auth.signUp({ email: email.trim().toLowerCase(), password });
+  if (error) return authError(error.message);
+  // Supabase answers without a session (and without an error) when the email is already
+  // registered, or when "Confirm email" is still on: try signing in to tell the two apart.
+  if (!data.session) {
+    const r = await signInWithPassword(email, password);
+    if (r === 'Wrong email or password.') return 'There is already an account with this email. Sign in instead.';
+    return r;
   }
+  return null;
+}
+
+/** Admin: set a new password for someone who forgot theirs. */
+export async function adminSetPassword(email: string, password: string): Promise<string | null> {
+  if (!supabase) return 'Not configured';
+  const { error } = await supabase.rpc('admin_set_password', { target_email: email, new_password: password });
+  if (!error) return null;
+  return /function .*does not exist|schema cache/i.test(error.message) ? 'Run supabase/migrations/0005_admin_password_reset.sql in Supabase first.' : error.message;
+}
+
+/** Change the signed-in user's password. */
+export async function changePassword(password: string): Promise<string | null> {
+  if (!supabase) return 'Accounts are not set up on this copy of NetLab.';
+  const { error } = await supabase.auth.updateUser({ password });
   return error ? authError(error.message) : null;
 }
 

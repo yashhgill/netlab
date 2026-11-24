@@ -2889,3 +2889,18 @@ circle.shape-handle { cursor: grab; }
   gap: 8px;
   flex-wrap: wrap;
 }
+.check-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+.inline-form {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.inline-form input {
+  width: 190px;
+}

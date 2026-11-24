@@ -8,14 +8,15 @@ import {
   adminGrants,
   type ProGrant,
   adminPayments,
+  adminSetPassword,
   adminSetPro,
   adminUsers,
   DEFAULT_PAYMENT,
   isPro,
   loadPaymentSettings,
   savePaymentSettings,
-  sendSignInCode,
-  verifySignInCode,
+  signInWithPassword,
+  signUpWithPassword,
   type PaymentSettings,
   myPayments,
   openAccountDialog,
@@ -101,97 +102,69 @@ export function AccountDialogs() {
 }
 
 function SignIn() {
-  const [step, setStep] = useState<'email' | 'code'>('email');
+  const [mode, setMode] = useState<'in' | 'up'>('in');
   const [email, setEmail] = useState('');
-  const [code, setCode] = useState('');
+  const [password, setPassword] = useState('');
+  const [confirm, setConfirm] = useState('');
+  const [show, setShow] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [wait, setWait] = useState(0);
   const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
-  const digits = code.replace(/\D/g, '');
-
-  useEffect(() => {
-    if (wait <= 0) return;
-    const t = setTimeout(() => setWait(wait - 1), 1000);
-    return () => clearTimeout(t);
-  }, [wait]);
-
-  const send = async () => {
-    setBusy(true);
-    setErr(null);
-    const r = await sendSignInCode(email);
-    setBusy(false);
-    if (r) return setErr(r);
-    setStep('code');
-    setCode('');
-    setWait(60);
-  };
-
-  if (step === 'code') {
-    return (
-      <form
-        className="stack"
-        onSubmit={async (e) => {
-          e.preventDefault();
-          setBusy(true);
-          setErr(null);
-          const r = await verifySignInCode(email, digits);
-          setBusy(false);
-          if (r) setErr(r);
-        }}
-      >
-        <p>
-          We emailed a sign-in code to <strong>{email.trim()}</strong>. Type it here.
-        </p>
-        <label className="stack-field">
-          <span>Code</span>
-          <input
-            id="signin-code"
-            className="code-input"
-            inputMode="numeric"
-            autoComplete="one-time-code"
-            autoFocus
-            maxLength={12}
-            value={code}
-            onChange={(e) => setCode(e.target.value.replace(/[^\d\s]/g, ''))}
-            placeholder="123456"
-          />
-        </label>
-        {err && <p className="field-err">{err}</p>}
-        <button className="btn primary" type="submit" disabled={busy || digits.length < 6}>
-          {busy ? 'Checking…' : 'Sign in'}
-        </button>
-        <p className="muted small">The code works once and expires after an hour. No email? Check your spam folder.</p>
-        <div className="row-between">
-          <button type="button" className="link-btn" onClick={() => (setStep('email'), setErr(null))}>
-            Use a different email
-          </button>
-          <button type="button" className="link-btn" disabled={busy || wait > 0} onClick={send}>
-            {wait > 0 ? `Send a new code in ${wait}s` : 'Send a new code'}
-          </button>
-        </div>
-      </form>
-    );
-  }
+  const ready = emailOk && (mode === 'in' ? password.length > 0 : password.length >= 8 && password === confirm);
 
   return (
     <form
       className="stack"
-      onSubmit={(e) => {
+      onSubmit={async (e) => {
         e.preventDefault();
-        if (emailOk) send();
+        if (!ready) return;
+        setBusy(true);
+        setErr(null);
+        const r = mode === 'in' ? await signInWithPassword(email, password) : await signUpWithPassword(email, password);
+        setBusy(false);
+        if (r) setErr(r);
       }}
     >
-      <p className="muted small">Type your email and we'll send you a 6-digit code. No password needed. New here? The same code creates your account.</p>
+      <div className="seg" role="tablist">
+        <button type="button" role="tab" aria-selected={mode === 'in'} className={mode === 'in' ? 'on' : ''} onClick={() => (setMode('in'), setErr(null))}>
+          Sign in
+        </button>
+        <button type="button" role="tab" aria-selected={mode === 'up'} className={mode === 'up' ? 'on' : ''} onClick={() => (setMode('up'), setErr(null))}>
+          Create account
+        </button>
+      </div>
       <label className="stack-field">
         <span>Email</span>
         <input id="signin-email" type="email" autoComplete="email" autoFocus required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" />
       </label>
+      <label className="stack-field">
+        <span>Password{mode === 'up' ? ' (at least 8 characters)' : ''}</span>
+        <input
+          id="signin-password"
+          type={show ? 'text' : 'password'}
+          autoComplete={mode === 'in' ? 'current-password' : 'new-password'}
+          required
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+        />
+      </label>
+      {mode === 'up' && (
+        <label className="stack-field">
+          <span>Type the password again</span>
+          <input id="signin-confirm" type={show ? 'text' : 'password'} autoComplete="new-password" required value={confirm} onChange={(e) => setConfirm(e.target.value)} />
+        </label>
+      )}
+      <label className="check-row small">
+        <input type="checkbox" checked={show} onChange={(e) => setShow(e.target.checked)} /> Show password
+      </label>
+      {mode === 'up' && confirm.length > 0 && confirm !== password && <p className="field-err">The two passwords don't match.</p>}
       {err && <p className="field-err">{err}</p>}
-      <button className="btn primary" type="submit" disabled={busy || !emailOk}>
-        {busy ? 'Sending…' : 'Email me a code'}
+      <button className="btn primary" type="submit" disabled={busy || !ready}>
+        {busy ? (mode === 'in' ? 'Signing in…' : 'Creating account…') : mode === 'in' ? 'Sign in' : 'Create account'}
       </button>
-      <p className="muted small">Your topologies stay on this device. An account is needed for the AI assistant.</p>
+      <p className="muted small">
+        {mode === 'in' ? 'Forgot your password? Ask the NetLab admin to reset it.' : 'No email confirmation needed: you can use the AI straight away.'} Your topologies stay on this device.
+      </p>
     </form>
   );
 }
@@ -453,7 +426,8 @@ function Admin() {
                         >
                           Remove Pro
                         </button>
-                      )}
+                      )}{' '}
+                      {u.email && <ResetPassword email={u.email} onDone={setMsg} />}
                     </td>
                   </tr>
                 ))}
@@ -463,6 +437,43 @@ function Admin() {
         </>
       )}
     </div>
+  );
+}
+
+/** Admin: set a new password for a user who forgot theirs. */
+function ResetPassword({ email, onDone }: { email: string; onDone: (m: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [pw, setPw] = useState('');
+  const [busy, setBusy] = useState(false);
+  if (!open)
+    return (
+      <button className="btn small" onClick={() => setOpen(true)}>
+        Reset password
+      </button>
+    );
+  return (
+    <form
+      className="inline-form"
+      onSubmit={async (e) => {
+        e.preventDefault();
+        setBusy(true);
+        const err = await adminSetPassword(email, pw);
+        setBusy(false);
+        onDone(err ?? `New password set for ${email}. Tell them the new password; they can sign in with it now.`);
+        if (!err) {
+          setOpen(false);
+          setPw('');
+        }
+      }}
+    >
+      <input type="text" autoComplete="off" autoFocus placeholder="New password (8+ characters)" value={pw} onChange={(e) => setPw(e.target.value)} aria-label={`New password for ${email}`} />
+      <button className="btn small primary" type="submit" disabled={busy || pw.length < 8}>
+        Save
+      </button>
+      <button className="btn small" type="button" onClick={() => setOpen(false)}>
+        Cancel
+      </button>
+    </form>
   );
 }
 
